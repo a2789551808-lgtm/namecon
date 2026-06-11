@@ -43,7 +43,7 @@ set(TRANSPORT_SRCS
 
 # === 配置 ===
 set(CONFIG_SRCS
-    config/Config.cpp
+    config/ConfigMgr.cpp
 )
 
 # === gRPC 服务 ===

@@ -34,7 +34,6 @@ make build
 # http://localhost:3000
 ```
 
-> 详细环境配置见 [docs/development.md](docs/development.md)
 
 ---
 
@@ -68,7 +67,6 @@ namecon/
 ├── web/                      # 前端 (原生 HTML/JS)
 ├── signal-svc/               # Go 信令服务
 ├── media-svc/                # C++ 媒体引擎
-└── docs/                     # 文档
 ```
 
 ---
