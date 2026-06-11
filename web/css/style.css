@@ -1,0 +1,7 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: Arial, sans-serif; background: #1a1a2e; color: #eee; }
+#app { max-width: 500px; margin: 100px auto; text-align: center; }
+#app input, #app button { padding: 10px; margin: 5px; font-size: 16px; }
+#video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; padding: 10px; }
+#controls { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
+#controls button { padding: 10px 20px; font-size: 14px; cursor: pointer; }

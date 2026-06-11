@@ -1,0 +1,11 @@
+server:
+  http_port: 8080
+  ws_port: 8081
+
+jwt:
+  secret: "change-me-in-production"
+  expire_hours: 24
+
+media_service:
+  host: "127.0.0.1"
+  port: 50051

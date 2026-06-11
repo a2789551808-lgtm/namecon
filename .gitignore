@@ -1,0 +1,21 @@
+# C++ build
+media-svc/build/
+media-svc/generated/
+*.o
+*.a
+*.so
+
+# Go build
+signal-svc/build/
+signal-svc/pkg/pb/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
