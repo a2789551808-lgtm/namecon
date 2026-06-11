@@ -2,31 +2,101 @@ syntax = "proto3";
 package media;
 option go_package = "namecon/signal-svc/pkg/pb/media";
 
+// ==========================================
+// Service 定义 — Go ↔ C++ 的 8 个 RPC 接口
+// ==========================================
 service MediaService {
-  rpc CreateRoom(CreateRoomReq) returns (CreateRoomResp);
-  rpc DestroyRoom(DestroyRoomReq) returns (DestroyRoomResp);
-  rpc AddPeer(AddPeerReq) returns (AddPeerResp);
-  rpc RemovePeer(RemovePeerReq) returns (RemovePeerResp);
-  rpc SendOffer(SendOfferReq) returns (SendOfferResp);
+  rpc CreateRoom      (CreateRoomReq)       returns (CreateRoomResp);
+  rpc DestroyRoom     (DestroyRoomReq)      returns (DestroyRoomResp);
+  rpc AddPeer         (AddPeerReq)          returns (AddPeerResp);
+  rpc RemovePeer      (RemovePeerReq)       returns (RemovePeerResp);
+  rpc SendOffer       (SendOfferReq)        returns (SendOfferResp);
   rpc SendIceCandidate(SendIceCandidateReq) returns (SendIceCandidateResp);
-  rpc MuteTrack(MuteTrackReq) returns (MuteTrackResp);
-  rpc GetRoomStats(RoomStatsReq) returns (RoomStatsResp);
+  rpc MuteTrack       (MuteTrackReq)        returns (MuteTrackResp);
+  rpc GetRoomStats    (RoomStatsReq)        returns (RoomStatsResp);
 }
 
-// TODO: 定义各 message 类型
-message CreateRoomReq { string room_name = 1; }
-message CreateRoomResp { string room_id = 1; string token = 2; }
-message DestroyRoomReq { string room_id = 1; }
-message DestroyRoomResp { bool success = 1; }
-message AddPeerReq { string room_id = 1; string peer_id = 2; string token = 3; }
-message AddPeerResp { string sfu_ip = 1; int32 sfu_port = 2; }
-message RemovePeerReq { string room_id = 1; string peer_id = 2; }
-message RemovePeerResp { bool success = 1; }
-message SendOfferReq { string room_id = 1; string peer_id = 2; string sdp = 3; }
-message SendOfferResp { string answer_sdp = 1; }
-message SendIceCandidateReq { string room_id = 1; string peer_id = 2; string candidate = 3; }
-message SendIceCandidateResp { bool success = 1; }
-message MuteTrackReq { string room_id = 1; string peer_id = 2; bool mute_audio = 3; bool mute_video = 4; }
-message MuteTrackResp { bool success = 1; }
-message RoomStatsReq { string room_id = 1; }
-message RoomStatsResp { int32 peer_count = 1; }
+// ==========================================
+// 请求 / 响应 Message 定义
+// ==========================================
+
+// -- 房间管理 --
+message CreateRoomReq {
+  string room_name = 1;
+}
+
+message CreateRoomResp {
+  string room_id = 1;
+  string token   = 2;
+}
+
+message DestroyRoomReq {
+  string room_id = 1;
+}
+
+message DestroyRoomResp {
+  bool success = 1;
+}
+
+// -- 参会者管理 --
+message AddPeerReq {
+  string room_id = 1;
+  string peer_id = 2;
+  string token   = 3;
+}
+
+message AddPeerResp {
+  string sfu_ip   = 1;
+  int32  sfu_port = 2;
+}
+
+message RemovePeerReq {
+  string room_id = 1;
+  string peer_id = 2;
+}
+
+message RemovePeerResp {
+  bool success = 1;
+}
+
+// -- WebRTC 信令 --
+message SendOfferReq {
+  string room_id = 1;
+  string peer_id = 2;
+  string sdp     = 3;
+}
+
+message SendOfferResp {
+  string answer_sdp = 1;
+}
+
+message SendIceCandidateReq {
+  string room_id  = 1;
+  string peer_id  = 2;
+  string candidate = 3;
+}
+
+message SendIceCandidateResp {
+  bool success = 1;
+}
+
+// -- 媒体控制 --
+message MuteTrackReq {
+  string room_id    = 1;
+  string peer_id    = 2;
+  bool   mute_audio = 3;
+  bool   mute_video = 4;
+}
+
+message MuteTrackResp {
+  bool success = 1;
+}
+
+// -- 统计 --
+message RoomStatsReq {
+  string room_id = 1;
+}
+
+message RoomStatsResp {
+  int32 peer_count = 1;
+}

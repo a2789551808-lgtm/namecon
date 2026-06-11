@@ -1,4 +1,8 @@
 #pragma once
+#include <cstddef>
+#include <cstdint>
+#include <string>
+
 // AI 管线总控 (预留)
 class AIPipeline {
 public:

@@ -1,6 +1,6 @@
 # NameCon — 轻量级视频会议系统
 
-> C++ 媒体引擎 + Go 信令服务器 + Web 前端 | 校招项目
+> C++ 媒体引擎 + Go 信令服务器 + Web 前端
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev/)
@@ -69,11 +69,6 @@ namecon/
 ├── signal-svc/               # Go 信令服务
 ├── media-svc/                # C++ 媒体引擎
 └── docs/                     # 文档
-    ├── development.md        # 开发流程
-    ├── project-overview.md   # 项目详细概览
-    ├── architecture.md       # 架构设计
-    ├── protocol.md           # 信令协议
-    └── interview.md          # 面试准备
 ```
 
 ---
@@ -92,36 +87,6 @@ namecon/
 | C++ 日志 | `spdlog` |
 | 构建 | CMake 3.20+ / Go Module |
 | 部署 | Docker + Docker Compose |
-
----
-
-## 文档索引
-
-| 文档 | 说明 |
-|------|------|
-| [docs/development.md](docs/development.md) | 开发流程、环境配置、分阶段计划 |
-| [docs/project-overview.md](docs/project-overview.md) | 项目详细概览：架构、协议、SFU 核心、AI 预留 |
-| [docs/architecture.md](docs/architecture.md) | 架构设计文档 |
-| [docs/protocol.md](docs/protocol.md) | 信令协议详细说明 |
-| [docs/interview.md](docs/interview.md) | 面试准备要点 |
-
----
-
-## 开发阶段
-
-```
-Phase 1 — MVP 音视频通话 (2~3 周)
-  ✅ 两人浏览器互通
-
-Phase 2 — 多人会议 (1 周)
-  多人网格 + 静音 + 屏幕共享
-
-Phase 3 — AI 总结 (2 周)
-  whisper.cpp ASR + llama.cpp 对话总结
-
-Phase 4 — 文档 (1 周)
-  架构图 + 面试话术
-```
 
 ---
 

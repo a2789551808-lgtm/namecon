@@ -1,5 +1,11 @@
 package config
 
+import (
+	"os"
+
+	"gopkg.in/yaml.v3"
+)
+
 // Config 信令服务配置
 type Config struct {
 	Server       ServerConfig       `yaml:"server"`
@@ -23,6 +29,26 @@ type MediaServiceConfig struct {
 }
 
 func Load(path string) (*Config, error) {
-	// TODO: 从 YAML 文件加载配置
-	return &Config{}, nil
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	cfg := &Config{
+		Server: ServerConfig{
+			HTTPPort: 8080,
+			WSPort:   8081,
+		},
+		JWT: JWTConfig{
+			Secret:      "change-me",
+			ExpireHours: 24,
+		},
+		MediaService: MediaServiceConfig{
+			Host: "127.0.0.1",
+			Port: 50051,
+		},
+	}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
