@@ -21,10 +21,8 @@ signal-svc/pkg/pb/
 .DS_Store
 Thumbs.db
 
-# === Development docs (local only) ===
-docs/development.md
-docs/project-overview.md
-docs/rules.md
+# === Docs (local only) ===
+docs/
 
 # === Logs ===
 *.log

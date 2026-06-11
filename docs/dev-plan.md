@@ -1,6 +1,12 @@
 # NameCon 开发计划
 
-> 版本: v1.0 | 日期: 2026-06-11 | 当前: Phase 1 完成
+> 版本: v2.0 | 日期: 2026-06-11 | 当前: Phase 2 Day 6-7 完成
+
+---
+
+## MVP 定位
+
+> **限定范围**：localhost、Chrome 浏览器、host candidate、VP8/Opus、rtcp-mux、bundle、单路音视频。目标是"从零实现轻量级 WebRTC SFU 核心链路"，非生产级视频会议。
 
 ---
 
@@ -9,8 +15,8 @@
 | 阶段 | 目标 | 周期 | 状态 |
 |------|------|:--:|:--:|
 | Phase 1 | 项目骨架 + gRPC 通信 | 1 周 | ✅ 完成 |
-| Phase 2 | 核心传输层 + 音视频通话 | 2~3 周 | 🔜 |
-| Phase 3 | 多人会议 + 屏幕共享 | 1 周 | ⬜ |
+| Phase 2 | WebRTC 最小闭环 | 4~5 周 | 🔜 |
+| Phase 3 | RTCP 补全 + 多人 SFU | 1~2 周 | ⬜ |
 | Phase 4 | AI 总结 + 文档 | 2 周 | ⬜ |
 
 ---
@@ -23,170 +29,151 @@
 |------|------|:--:|
 | 环境安装 | 19 项依赖全部通过 | ✅ |
 | Proto 定义 | `media.proto` + gen_proto.sh 生成代码 | ✅ |
-| Go 骨架编译 | signal-svc 编译通过，15MB 二进制 | ✅ |
-| C++ 骨架编译 | media-svc 编译通过，700KB 二进制 | ✅ |
-| gRPC 打通 | Go Client → C++ Server CreateRoom 往返成功 | ✅ |
+| Go 骨架编译 | signal-svc 编译通过 | ✅ |
+| C++ 骨架编译 | media-svc 编译通过 | ✅ |
+| gRPC 打通 | Go Client ↔ C++ Server CreateRoom 往返成功 | ✅ |
+| UdpServer | boost::asio 异步 UDP，5 线程多核 | ✅ |
 | 构建系统 | `make build` / `make run` / `make clean` | ✅ |
 | 开发规范 | `docs/rules.md` (C++ + Go) | ✅ |
 
-**验收**: 两个二进制启动，gRPC CreateRoom 返回 room_id + token ✅
+**验收**: 两个二进制启动，gRPC 往返成功，UDP 收发正常 ✅
 
 ---
 
-## Phase 2 — 核心传输层 🔜
+## Phase 2 — WebRTC 最小闭环 🔜
 
-> 预计 2026-06-11 ~ 2026-06-28
+> 预计 2026-06-11 ~ 2026-07-10（约 4 周）  
+> 目标：两个 Chrome 标签页 localhost 互通音视频
 
-### Day 6-7: UdpServer
+### Day 8-10: ICE-lite + SDP
 
 ```
-文件: media-svc/transport/UdpServer.h/.cpp
-依赖: boost::asio
+新增文件:
+  media-svc/transport/IceServer.h/.cpp     — ICE-lite
+  media-svc/sdp/SdpParser.h/.cpp           — SDP 解析+生成
 
 任务:
-  [ ] 封装 boost::asio::io_context::udp::socket
-  [ ] 绑定 UDP 端口 (从 Config 读取范围)
-  [ ] async_receive_from 异步收包
-  [ ] async_send_to 异步发包
-  [ ] 管理 endpoint → peerId 映射
-  [ ] 集成到 main.cpp 的 io_context
+  [ ] ICE-lite: 解析浏览器 STUN Binding Request
+  [ ] ICE-lite: 回复 STUN Binding Response (XOR-MAPPED-ADDRESS)
+  [ ] SDP: 解析浏览器 Offer (ice-ufrag/ice-pwd/fingerprint/codec/ssrc)
+  [ ] SDP: 生成 Answer (setup:passive, fingerprint, candidate, rtcp-mux)
+  [ ] 自签 DTLS 证书 + fingerprint 计算
 
-验收: 两个 UDP socket 互相收发消息
+关键点:
+  - ICE-lite 是硬门槛：浏览器不发 STUN 就直接放弃连接
+  - SDP 缺字段 DTLS 握手一定失败
+  - 不需要完整 ICE agent，只需 ICE-lite（服务端模式）
+
+验收: 浏览器能完成 ICE 连接检测 + DTLS 握手
 ```
 
-### Day 8-9: DtlsContext
+### Day 11-13: DTLS + SRTP
 
 ```
 文件: media-svc/transport/DtlsContext.h/.cpp
-依赖: OpenSSL 3.0+
+      media-svc/transport/SrtpContext.h/.cpp
+依赖: OpenSSL 3.0+ / libsrtp2
 
 任务:
-  [ ] 生成自签证书 (启动时)
-  [ ] 创建 SSL_CTX (DTLS method)
-  [ ] 处理 DTLS 握手包
-  [ ] 导出 SRTP 密钥材料 (SSL_export_keying_material)
+  [ ] DTLS: 创建 SSL_CTX (DTLS method)，加载自签证书
+  [ ] DTLS: 通过 UDP 交换握手包
+  [ ] DTLS: SSL_export_keying_material 导出 SRTP 密钥
+  [ ] SRTP: 用 DTLS 导出的密钥初始化加密上下文
+  [ ] SRTP: srtp_protect / srtp_unprotect 封装
+  [ ] 每个 Peer 独立的 SRTP 上下文
 
-验收: 和浏览器完成 DTLS 握手，导出密钥
+验收: 和浏览器完成 DTLS 握手 → SRTP 加解密往返正确
 ```
 
-### Day 10-11: SrtpContext
+### Day 14-15: RTP + RTCP 最小实现
 
 ```
-文件: media-svc/transport/SrtpContext.h/.cpp
-依赖: libsrtp2
+新增文件:
+  media-svc/rtp/RtpHeader.h               — RTP 头解析
+  media-svc/rtcp/RtcpHandler.h/.cpp       — RTCP 处理
 
 任务:
-  [ ] 封装 srtp_create + srtp_protect + srtp_unprotect
-  [ ] 用 DTLS 导出的密钥初始化 SRTP 上下文
-  [ ] 每个 Peer 独立的加密上下文
+  [ ] RTP: 结构体解析（V/P/PT/SSRC/SeqNum/Timestamp/extension/padding）
+  [ ] RTP: 不能硬编码 12 字节，要正确处理 CSRC 和 header extension
+  [ ] RTCP: PLI (Picture Loss Indication) → 请求关键帧
+  [ ] RTCP: NACK (Negative ACK) → 丢包重传（可延后）
+  [ ] RTCP: SR (Sender Report) → 基础统计
 
-验收: 加解密往返正确
+验收: 能正确取出 SSRC/PT/SeqNum，响应 PLI
 ```
 
-### Day 12: SFU 路由核心
+### Day 16-17: SFU 路由核心
 
 ```
 文件: media-svc/sfu/Router.h/.cpp
       media-svc/sfu/Room.h/.cpp
       media-svc/sfu/Peer.h/.cpp
       media-svc/sfu/RouteTable.h/.cpp
-      media-svc/sfu/Forwarder.h/.cpp
 
 任务:
   [ ] Router: 主循环 (收包→解密→路由→加密→转发)
   [ ] Room: 房间实体，管理 peer 列表
-  [ ] Peer: SSRC/密钥/endpoint 管理
+  [ ] Peer: SSRC/密钥/endpoint/DtlsContext/SrtpContext
   [ ] RouteTable: SSRC→Peer 映射 (O(1))
-  [ ] Forwarder: RTP 包转发
 
-验收: 模拟两个 Peer 的 SSRC 包能互相转发
+验收: 模拟两个 Peer 的 RTP 包能互相转发
 ```
 
-### Day 13: 完善 gRPC 方法
+### Day 18-19: 完善 gRPC 方法
 
 ```
 文件: media-svc/grpc/MediaServiceImpl.cpp
 
 任务:
   [ ] CreateRoom → SFU 创建房间
-  [ ] AddPeer → 分配 UDP 端口 + 创建 DTLS/SRTP 上下文
-  [ ] SendOffer → 解析 SDP + 生成 answer
-  [ ] SendIceCandidate → 添加到 Peer ICE 候选列表
+  [ ] AddPeer → 分配端口 + 创建 ICE/DTLS/SRTP 上下文
+  [ ] SendOffer → SDP 解析 + 生成 answer
+  [ ] SendIceCandidate → 添加到 Peer candidates
   [ ] RemovePeer → 清理 Peer 资源
-  [ ] 错误处理完善
 
 验收: 所有 gRPC 方法实现完毕
 ```
 
-### Day 14: Go 信令后端
+### Day 20-22: Go 信令后端 + 前端 + Adapter
 
 ```
-文件: signal-svc/internal/api/*
-      signal-svc/internal/signaling/*
-      signal-svc/internal/room/*
-
 任务:
-  [ ] REST API: 房间 CRUD + Token 签发
-  [ ] WebSocket Hub: 连接管理 + 消息路由
-  [ ] Room Manager: 房间生命周期
+  [ ] Go REST API: 房间 CRUD + Token 签发
+  [ ] Go WebSocket Hub: 连接管理 + 消息路由
+  [ ] Go ↔ C++ gRPC Adapter
+  [ ] 前端: index.html + room.html + webrtc.js
+  [ ] 前端: setLocalDescription(offer) → WS → C++ → answer → setRemoteDescription
 
-验收: curl 调用 API 创建房间，WebSocket 加入房间
+验收: 浏览器能完成信令交换，ICE 连接建立
 ```
 
-### Day 15: Go ↔ C++ Adapter
-
-```
-文件: signal-svc/internal/sfu/adapter.go
-
-任务:
-  [ ] Go 信令操作 → gRPC 请求映射
-  [ ] CreateRoom / AddPeer / SendOffer 完整调用链
-  [ ] 错误处理 + 超时控制
-
-验收: Go 信令流程完整串联 C++ SFU
-```
-
-### Day 16-18: 前端
-
-```
-文件: web/*
-
-任务:
-  [ ] index.html: 创建/加入房间 UI
-  [ ] room.html: 视频网格 + 控制栏
-  [ ] api.js: REST API 调用
-  [ ] signaling.js: WebSocket 信令
-  [ ] webrtc.js: PeerConnection 管理 (核心)
-  [ ] ui.js: 界面交互
-
-验收: 页面加载正常，WebSocket 连接成功
-```
-
-### Day 19-21: 联调
+### Day 23-28: 联调 + 修复
 
 ```
 任务:
   [ ] 浏览器 A ↔ SFU ↔ 浏览器 B
-  [ ] DTLS 握手调试
+  [ ] DTLS 握手调试（chrome://webrtc-internals）
   [ ] ICE 连接状态处理
   [ ] 音视频同步确认
   [ ] Bug 修复
 
-验收: 两个浏览器标签页互相看到听到 ✅
+验收: 两个 Chrome 标签页 localhost 互通音视频 ✅
 ```
 
 ---
 
-## Phase 3 — 多人会议 ⬜
+## Phase 3 — RTCP 补全 + 多人 SFU ⬜
 
-> 预计 2026-06-29 ~ 2026-07-05
+> 预计 2026-07-11 ~ 2026-07-24
 
-| 任务 | 产出 |
+| 任务 | 说明 |
 |------|------|
-| 多人视频网格布局 | 2×2 / 3×3 自适应 |
+| RTCP NACK 完善 | 丢包重传 |
+| RTCP REMB/TWCC | 带宽估计（可选） |
+| 多人视频网格 | 2×2 / 3×3 自适应布局 |
 | 静音/关闭摄像头 | WebSocket mute + gRPC MuteTrack |
 | 屏幕共享 | getDisplayMedia + 独立 video SSRC |
-| 联调 + 修复 | 4 人会议稳定 |
+| 联调 | 4 人会议稳定 |
 
 **验收**: 4 人会议 + 屏幕共享 ✅
 
@@ -194,7 +181,7 @@
 
 ## Phase 4 — AI 总结 + 文档 ⬜
 
-> 预计 2026-07-06 ~ 2026-07-19
+> 预计 2026-07-25 ~ 2026-08-07
 
 | 任务 | 产出 |
 |------|------|
@@ -209,12 +196,40 @@
 
 ---
 
+## WebRTC 协议要点
+
+```
+浏览器 RTCPeerConnection 连接 SFU 的关键步骤：
+
+① ICE 连通性检测
+   浏览器 → STUN Binding Request → SFU
+   SFU    → STUN Binding Response (XOR-MAPPED-ADDRESS) → 浏览器
+   ⚠️ 这一步不做，浏览器直接放弃连接
+
+② DTLS 握手
+   双方通过 UDP 交换 DTLS 握手包
+   验证 SDP 里的 fingerprint 匹配
+   握手完成后双方导出 SRTP 密钥材料
+
+③ SRTP 加密通信
+   浏览器用导出的密钥加密 RTP 包
+   SFU 解密 → 查 SSRC 路由 → 用目标密钥重加密 → 发出
+
+④ RTCP 反馈
+   浏览器发 PLI → SFU 转发给发送方 → 发送方产生关键帧
+   浏览器发 NACK → SFU 转发 → 发送方重传丢失的包
+```
+
+---
+
 ## 风险与对策
 
 | 风险 | 等级 | 对策 |
 |------|:--:|------|
-| DTLS 握手调试困难 | 🔴 | chrome://webrtc-internals + Wireshark |
-| 浏览器 HTTPS 限制 | 🟡 | localhost 特例，或 python3 http.server |
+| ICE 连通失败 | 🔴 | STUN Response 格式必须正确，用 Wireshark 对照 RFC 抓包 |
+| DTLS 握手超时 | 🔴 | chrome://webrtc-internals/ 查看握手状态 + SDP 字段 |
+| SDP 字段缺失导致连接失败 | 🔴 | 对照浏览器 offer 逐字段确认 answer |
+| 浏览器 HTTPS 限制 | 🟡 | localhost HTTP 特例可用，或 python3 http.server |
 | GitHub 网络不稳定 | 🟡 | 配置代理或 SSH |
 | AI 模型下载 | 🟡 | whisper tiny 75MB，提前下载 |
-| 内存不足 (7.4G) | 🟢 | make -j8 限制并行数 |
+| 内存不足 (7.4G) | 🟢 | make -j4 限制并行数 |

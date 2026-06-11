@@ -37,8 +37,23 @@ set(SFU_SRCS
 # === 传输层 ===
 set(TRANSPORT_SRCS
     transport/UdpServer.cpp
+    transport/IceServer.cpp
     transport/DtlsContext.cpp
     transport/SrtpContext.cpp
+)
+
+# === SDP 解析 ===
+set(SDP_SRCS
+    sdp/SdpParser.cpp
+)
+
+# === RTP / RTCP ===
+set(RTP_SRCS
+    rtp/RtpHeader.cpp
+)
+
+set(RTCP_SRCS
+    rtcp/RtcpHandler.cpp
 )
 
 # === 配置 ===
@@ -71,6 +86,9 @@ add_executable(media-svc
     ${PROTO_SRCS}
     ${SFU_SRCS}
     ${TRANSPORT_SRCS}
+    ${SDP_SRCS}
+    ${RTP_SRCS}
+    ${RTCP_SRCS}
     ${GRPC_SRCS}
     ${CONFIG_SRCS}
     ${AI_SRCS}

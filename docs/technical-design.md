@@ -15,6 +15,8 @@ NameCon 是一个轻量级 WebRTC SFU 视频会议系统，使用 C++ 实现媒�
 - 基于 DTLS/SRTP 的安全媒体传输
 - 预留 AI 对话总结扩展位
 
+> **MVP 限定**：localhost、Chrome 浏览器、host candidate、VP8/Opus、rtcp-mux、bundle、单路音视频。目标是"从零实现轻量级 WebRTC SFU 核心链路"，非生产级视频会议。
+
 ### 1.2 技术选型理由
 
 | 决策 | 选型 | 理由 |
@@ -73,9 +75,13 @@ NameCon 是一个轻量级 WebRTC SFU 视频会议系统，使用 C++ 实现媒�
 |------|------|:--:|
 | `config/` | YAML 配置加载 + ConfigMgr 单例 | ✅ |
 | `grpc/` | gRPC Server + MediaServiceImpl | ✅ |
-| `transport/UdpServer` | UDP Socket 异步收发 | 🔲 |
+| `transport/UdpServer` | UDP Socket 异步收发 | ✅ |
+| `transport/IceServer` | ICE-lite：STUN Binding 响应 | 🔲 |
 | `transport/DtlsContext` | DTLS 握手（OpenSSL） | 🔲 |
 | `transport/SrtpContext` | SRTP 加解密（libsrtp） | 🔲 |
+| `sdp/SdpParser` | SDP offer 解析 + answer 生成（fingerprint/ice-ufrag/codec） | 🔲 |
+| `rtp/RtpHeader` | RTP 头解析（SSRC/PT/SeqNum/extension/padding） | 🔲 |
+| `rtcp/RtcpHandler` | RTCP 最小实现（PLI/NACK/SR） | 🔲 |
 | `sfu/Router` | 主循环：收包→解密→路由→加密→转发 | 🔲 |
 | `sfu/Room` | 房间实体（C++ 侧） | 🔲 |
 | `sfu/Peer` | 参会者（SSRC/密钥/地址） | 🔲 |
