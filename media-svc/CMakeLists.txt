@@ -39,6 +39,7 @@ set(TRANSPORT_SRCS
     transport/UdpServer.cpp
     transport/IceServer.cpp
     transport/DtlsContext.cpp
+    transport/PacketRouter.cpp
     transport/SrtpContext.cpp
 )
 
