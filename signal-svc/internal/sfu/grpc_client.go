@@ -39,16 +39,16 @@ func (c *Client) Close() error {
 
 // CreateRoom 调用 C++ 创建房间
 func (c *Client) CreateRoom(name string) (roomID, token string, err error) {
-    ctx, cancel := context.WithTimeout(                //  2 秒超时
-        context.Background(), 2*time.Second,
-    )
-    defer cancel()                                     //  函数退出时取消，防止泄漏
+	ctx, cancel := context.WithTimeout( //  2 秒超时
+		context.Background(), 2*time.Second,
+	)
+	defer cancel() //  函数退出时取消，防止泄漏
 
-    resp, err := c.media.CreateRoom(ctx,               //  调远程方法！
-        &pb.CreateRoomReq{RoomName: name},             //  传入请求参数
-    )
-    if err != nil {
-        return "", "", fmt.Errorf("CreateRoom: %w", err)
-    }
-    return resp.GetRoomId(), resp.GetToken(), nil      //  返回结果
+	resp, err := c.media.CreateRoom(ctx, //  调远程方法！
+		&pb.CreateRoomReq{RoomName: name}, //  传入请求参数
+	)
+	if err != nil {
+		return "", "", fmt.Errorf("CreateRoom: %w", err)
+	}
+	return resp.GetRoomId(), resp.GetToken(), nil //  返回结果
 }
