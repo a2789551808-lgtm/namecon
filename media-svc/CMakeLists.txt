@@ -28,7 +28,6 @@ set(PROTO_HDRS
 # === SFU 核心 ===
 set(SFU_SRCS
     sfu/Router.cpp
-    sfu/Room.cpp
     sfu/Peer.cpp
     sfu/RouteTable.cpp
     sfu/Forwarder.cpp
@@ -81,9 +80,15 @@ set(UTIL_SRCS
     utils/Stats.cpp
 )
 
+# === 核心启动 ===
+set(CORE_SRCS
+    core/MediaServer.cpp
+)
+
 # === 编译 ===
 add_executable(media-svc
     main.cpp
+    ${CORE_SRCS}
     ${PROTO_SRCS}
     ${SFU_SRCS}
     ${TRANSPORT_SRCS}
@@ -111,5 +116,26 @@ target_link_libraries(media-svc
     gRPC::grpc++
     spdlog::spdlog
     yaml-cpp::yaml-cpp
+    ${SRTP2_LIBRARIES}
+)
+
+# === 转发测试（仅依赖 SFU 核心，不需要 gRPC/Config/RtcpHandler） ===
+add_executable(test_forward
+    sfu/test_forward.cpp
+    sfu/Router.cpp
+    sfu/Peer.cpp
+    sfu/RouteTable.cpp
+    transport/UdpServer.cpp
+    transport/SrtpContext.cpp
+    rtp/RtpHeader.cpp
+)
+target_include_directories(test_forward PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${SRTP2_INCLUDE_DIRS}
+)
+target_link_libraries(test_forward
+    Boost::boost
+    OpenSSL::SSL
+    OpenSSL::Crypto
     ${SRTP2_LIBRARIES}
 )
