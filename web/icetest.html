@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>ICE Test</title></head>
+<body>
+<h2>SFU Direct Test</h2>
+<button onclick="test()">Start Test</button>
+<pre id="log"></pre>
+<script>
+async function test() {
+    const log = (msg) => document.getElementById('log').textContent += msg + '\n';
+    
+    // 手动构造 offer
+    const pc = new RTCPeerConnection({ iceServers: [] });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    stream.getTracks().forEach(t => pc.addTrack(t, stream));
+    
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    log('Offer created: ' + offer.sdp.length + ' bytes');
+    log('Offer SDP:\n' + offer.sdp.substring(0, 500));
+    
+    // 直接用 fetch 发到 Go（简化版）
+    const resp = await fetch('http://localhost:8080/api/rooms', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({room_name: 'icetest'})
+    });
+    const room = await resp.json();
+    log('Room: ' + room.room_id);
+    
+    const joinResp = await fetch('http://localhost:8080/api/rooms/' + room.room_id + '/join', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username: 'test'})
+    });
+    const join = await joinResp.json();
+    log('Peer: ' + join.peer_id);
+    
+    // 手动发 offer
+    const sdpResp = await fetch('http://localhost:8080/api/rooms/' + room.room_id + '/join', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username: 'test2'})
+    });
+    
+    // 用 WebSocket
+    const ws = new WebSocket('ws://localhost:8080/ws');
+    ws.onopen = () => {
+        ws.send(JSON.stringify({type: 'join', payload: {room_id: room.room_id, username: 'test3'}}));
+    };
+    ws.onmessage = async (e) => {
+        const msg = JSON.parse(e.data);
+        log('WS: ' + msg.type);
+        if (msg.type === 'joined') {
+            // Got SFU params
+            setTimeout(async () => {
+                ws.send(JSON.stringify({type: 'offer', payload: {sdp: offer.sdp}}));
+            }, 500);
+        }
+        if (msg.type === 'answer') {
+            log('Got answer: ' + msg.sdp.length + ' bytes');
+            log('Answer SDP:\n' + msg.sdp.substring(0, 500));
+            await pc.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: msg.sdp}));
+            log('Remote description set');
+            
+            pc.oniceconnectionstatechange = () => log('ICE: ' + pc.iceConnectionState);
+            pc.ontrack = (e) => log('Track: ' + e.track.kind);
+        }
+    };
+}
+</script>
+</body>
+</html>

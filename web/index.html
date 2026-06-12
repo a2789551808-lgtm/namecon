@@ -2,19 +2,53 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>NameCon - 视频会议</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NameCon — 轻量视频会议</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <h1>NameCon</h1>
-    <div id="app">
-        <input type="text" id="username" placeholder="输入用户名">
-        <button id="create-room">创建房间</button>
-        <input type="text" id="room-id" placeholder="输入房间号">
-        <button id="join-room">加入房间</button>
+    <div class="container">
+        <h1>🎥 NameCon</h1>
+        <p>轻量级 WebRTC 视频会议</p>
+        <div class="card">
+            <h2>创建房间</h2>
+            <input id="createName" type="text" placeholder="你的名字">
+            <button onclick="createRoom()">创建房间</button>
+        </div>
+        <div class="card">
+            <h2>加入房间</h2>
+            <input id="joinName" type="text" placeholder="你的名字">
+            <input id="roomId" type="text" placeholder="房间号 (6位数字)">
+            <button onclick="joinRoom()">加入房间</button>
+        </div>
+        <div id="status"></div>
     </div>
     <script src="js/api.js"></script>
-    <script src="js/signaling.js"></script>
-    <script src="js/ui.js"></script>
+    <script>
+        async function createRoom() {
+            const name = document.getElementById('createName').value || '房主';
+            const resp = await api.createRoom(name);
+            if (resp.room_id) {
+                // 显示房间号方便复制
+                document.getElementById('status').innerHTML =
+                    `<p style="color:green;font-size:1.2em">✅ 房间号: <b>${resp.room_id}</b></p>`;
+                localStorage.setItem('username', name);
+                localStorage.setItem('roomId', resp.room_id);
+                localStorage.setItem('token', resp.token);
+                setTimeout(() => { window.location.href = '/room.html'; }, 1000);
+            } else {
+                document.getElementById('status').innerHTML =
+                    '<p style="color:red">创建失败，请确认服务已启动</p>';
+            }
+        }
+        async function joinRoom() {
+            const name = document.getElementById('joinName').value || '参会者';
+            const roomId = document.getElementById('roomId').value;
+            if (!roomId) return alert('请输入房间号');
+            localStorage.setItem('username', name);
+            localStorage.setItem('roomId', roomId);
+            window.location.href = '/room.html';
+        }
+    </script>
 </body>
 </html>

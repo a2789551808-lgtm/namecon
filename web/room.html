@@ -2,20 +2,81 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>NameCon - 会议室</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NameCon — 会议室</title>
     <link rel="stylesheet" href="css/style.css">
+    <style>
+        .video-grid { display: flex; gap: 10px; flex-wrap: wrap; }
+        video { width: 320px; height: 240px; background: #333; border-radius: 8px; }
+        .controls { margin-top: 10px; }
+        button { margin: 4px; padding: 8px 16px; }
+    </style>
 </head>
 <body>
-    <div id="video-grid"></div>
-    <div id="controls">
-        <button id="mute-audio">静音</button>
-        <button id="mute-video">关闭摄像头</button>
-        <button id="share-screen">共享屏幕</button>
-        <button id="leave-room">离开</button>
+    <h2>NameCon 会议室</h2>
+    <div id="roomInfo"></div>
+    <div class="video-grid">
+        <div>
+            <video id="localVideo" autoplay muted playsinline></video>
+            <p>本地</p>
+        </div>
+        <div>
+            <video id="remoteVideo" autoplay playsinline muted></video>
+            <p>远程</p>
+        </div>
     </div>
+    <div class="controls">
+        <button id="joinBtn" onclick="startCall()">开始通话</button>
+        <button onclick="leaveRoom()">离开房间</button>
+    </div>
+
     <script src="js/api.js"></script>
     <script src="js/signaling.js"></script>
     <script src="js/webrtc.js"></script>
-    <script src="js/ui.js"></script>
+    <script>
+        const roomId = localStorage.getItem('roomId');
+        const username = localStorage.getItem('username') || '匿名';
+        document.getElementById('roomInfo').textContent =
+            `房间: ${roomId} | 用户: ${username}`;
+
+        function startCall() {
+            document.getElementById('joinBtn').disabled = true;
+            // 通过用户点击触发 WebSocket + getUserMedia，满足 Chrome autoplay 策略
+            signaling.connect();
+            signaling.ws.onopen = () => {
+                signaling.send('join', { room_id: roomId, username: username });
+            };
+        }
+
+        signaling.on('joined', async (msg) => {
+            console.log('Joined room, peer:', msg.peer_id);
+            // 用 SFU 参数初始化 WebRTC
+            await initWebRTC(msg);
+        });
+
+        signaling.on('error', (msg) => {
+            const errMsg = msg.message || 'unknown';
+            if (errMsg.includes('not found')) {
+                alert('房间 ' + roomId + ' 不存在，请重新创建。\n（提示：服务重启后房间会清空）');
+                window.location.href = '/';
+            } else {
+                alert('错误: ' + errMsg);
+            }
+        });
+
+        function leaveRoom() {
+            signaling.send('leave');
+            if (pc) { pc.close(); pc = null; }
+            if (localStream) { localStream.getTracks().forEach(t => t.stop()); }
+            signaling.close();
+            localStorage.clear();
+            window.location.href = '/';
+        }
+
+        // 关闭标签页时自动通知离开
+        window.addEventListener('beforeunload', () => {
+            signaling.send('leave');
+        });
+    </script>
 </body>
 </html>
