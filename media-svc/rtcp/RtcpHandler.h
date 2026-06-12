@@ -26,11 +26,21 @@ public:
     // 解析到 SDES 时回调 — 参数: ssrc, cname
     using SdesCallback = std::function<void(uint32_t ssrc, const std::string& cname)>;
 
+    // 解析到 SR 时回调 — SFU 据此同步时钟 + 监控发送质量
+    //   senderSsrc: 谁发的这个 SR
+    //   ntpMsw/ntpLsw: NTP 时间戳 (高32位/低32位)
+    //   rtpTs: 对应 NTP 时刻的 RTP 时间戳
+    //   pktCnt/octCnt: 发送者累计发了多少包/字节
+    using SrCallback = std::function<void(uint32_t senderSsrc,
+        uint32_t ntpMsw, uint32_t ntpLsw, uint32_t rtpTs,
+        uint32_t pktCnt, uint32_t octCnt)>;
+
     // === 回调设置 ===
     void setSendCallback(SendCallback cb)   { _sendCb = std::move(cb); }
     void setPliCallback(PliCallback cb)     { _pliCb = std::move(cb); }
     void setNackCallback(NackCallback cb)   { _nackCb = std::move(cb); }
     void setSdesCallback(SdesCallback cb)   { _sdesCb = std::move(cb); }
+    void setSrCallback(SrCallback cb)       { _srCb = std::move(cb); }
 
     // === 解析收到浏览器的 RTCP 复合包 ===
     void onRtcpPacket(const uint8_t* data, size_t len);
@@ -43,9 +53,20 @@ public:
     void sendNACK(uint32_t senderSsrc, uint32_t mediaSsrc,
                   uint16_t pid, uint16_t blp);
 
+    // 发送 SR 给指定 receiver — SFU 代理原 sender 发送
+    //   receiverSsrc: 收到 SR 的 SSRC (SFU 的 SSRC)
+    //   mediaSsrc: 原始发送者的 SSRC
+    //   ntpMsw/ntpLsw: SFU 当前的 NTP 时间
+    //   rtpTs: 最近转发的 RTP timestamp (原 sender 的)
+    //   pktCnt/octCnt: SFU 累计向此 receiver 转发了多少包/字节
+    void sendSR(uint32_t receiverSsrc, uint32_t mediaSsrc,
+                uint32_t ntpMsw, uint32_t ntpLsw, uint32_t rtpTs,
+                uint32_t pktCnt, uint32_t octCnt);
+
 private:
     SendCallback  _sendCb;
     PliCallback   _pliCb;
     NackCallback  _nackCb;
     SdesCallback  _sdesCb;
+    SrCallback    _srCb;
 };

@@ -39,8 +39,33 @@ void RtcpHandler::onRtcpPacket(const uint8_t* data, size_t len) {
 
         switch (pt) {
         case PT_SR:
-            // SR: SSRC(4) + NTP(8) + RTP(4) + pktCnt(4) + octCnt(4) + reports
-            // 暂存 sender SSRC, 用于后续 RTCP 发送
+            // SR: SSRC(4) + NTP(8) + RTP(4) + pktCnt(4) + octCnt(4) + RC×report(24)
+            {
+                uint32_t senderSsrc;
+                memcpy(&senderSsrc, p + 4, 4);
+                senderSsrc = ntohl(senderSsrc);
+
+                uint32_t ntpMsw, ntpLsw;
+                memcpy(&ntpMsw, p + 8,  4);
+                memcpy(&ntpLsw, p + 12, 4);
+                ntpMsw = ntohl(ntpMsw);
+                ntpLsw = ntohl(ntpLsw);
+
+                uint32_t rtpTs;
+                memcpy(&rtpTs, p + 16, 4);
+                rtpTs = ntohl(rtpTs);
+
+                uint32_t pktCnt, octCnt;
+                memcpy(&pktCnt, p + 20, 4);
+                memcpy(&octCnt, p + 24, 4);
+                pktCnt = ntohl(pktCnt);
+                octCnt = ntohl(octCnt);
+
+                if (_srCb) _srCb(senderSsrc, ntpMsw, ntpLsw, rtpTs, pktCnt, octCnt);
+
+                // RC 个 report block 暂不解析（RFC 3550 §6.4.1 SR 的 RR 部分）
+                // 进阶可用于监控丢包率，但 MVP 阶段先跳过
+            }
             break;
 
         case PT_SDES:
@@ -180,6 +205,66 @@ void RtcpHandler::sendNACK(uint32_t senderSsrc, uint32_t mediaSsrc,
 
     uint16_t nblp = htons(blp);
     memcpy(buf + 14, &nblp, 2);
+
+    _sendCb(buf, sizeof(buf));
+}
+
+// ============================================================
+// 构造 SR (Sender Report)
+//
+// 结构 (RFC 3550 §6.4.1):
+//    0                   1                   2                   3
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   |V=2|P|   RC    |   PT=SR=200   |         length=6             |
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   |                    SSRC of sender (SFU)                       |
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   |                    NTP timestamp, most significant word       |
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   |                    NTP timestamp, least significant word      |
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   |                    RTP timestamp (原 sender 的)                |
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   |                    sender's packet count                      |
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   |                    sender's octet count                       |
+//   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//   (report blocks 暂不包含，RC=0)
+//
+// receiverSsrc = SFU 自己的 SSRC (收这个 SR 的人把 SFU 当作发送者)
+// mediaSsrc    = 真正发 RTP 的原始发送者 SSRC (RTP timestamp 用它)
+// ============================================================
+void RtcpHandler::sendSR(uint32_t receiverSsrc, uint32_t mediaSsrc,
+                          uint32_t ntpMsw, uint32_t ntpLsw, uint32_t rtpTs,
+                          uint32_t pktCnt, uint32_t octCnt) {
+    if (!_sendCb) return;
+
+    uint8_t buf[28];
+    buf[0] = RTCP_V2;                              // V=2, P=0, RC=0
+    buf[1] = PT_SR;                                // 200
+
+    uint16_t len = htons(6);                       // (28/4) - 1 = 6
+    memcpy(buf + 2, &len, 2);
+
+    uint32_t ssrc = htonl(receiverSsrc);           // SFU 的身份
+    memcpy(buf + 4, &ssrc, 4);
+
+    uint32_t ntpHi = htonl(ntpMsw);
+    memcpy(buf + 8,  &ntpHi, 4);
+
+    uint32_t ntpLo = htonl(ntpLsw);
+    memcpy(buf + 12, &ntpLo, 4);
+
+    uint32_t rtp = htonl(rtpTs);                   // 原 sender 的 RTP timestamp
+    memcpy(buf + 16, &rtp, 4);
+
+    uint32_t pkts = htonl(pktCnt);
+    memcpy(buf + 20, &pkts, 4);
+
+    uint32_t octs = htonl(octCnt);
+    memcpy(buf + 24, &octs, 4);
+
+    (void)mediaSsrc;  // 暂未使用，后续扩展 report blocks 时用到
 
     _sendCb(buf, sizeof(buf));
 }
