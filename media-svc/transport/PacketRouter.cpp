@@ -3,6 +3,7 @@
 #include "IceServer.h"
 #include "DtlsContext.h"
 #include "SrtpContext.h"
+#include "../rtcp/RtcpHandler.h"
 #include <iostream>
 
 PacketRouter::PacketRouter(std::shared_ptr<UdpServer> udp)
@@ -12,6 +13,10 @@ PacketRouter::PacketRouter(std::shared_ptr<UdpServer> udp)
 
 void PacketRouter::setIceServer(std::shared_ptr<IceServer> ice) {
     _ice = std::move(ice);
+}
+
+void PacketRouter::setRtcpHandler(std::shared_ptr<RtcpHandler> rtcp) {
+    _rtcp = std::move(rtcp);
 }
 
 // ==============================
@@ -86,7 +91,7 @@ void PacketRouter::handleDtls(const uint8_t* data, size_t len,
 }
 
 // ==============================
-// SRTP 媒体包 → SrtpContext::unprotect
+// SRTP 媒体包 → SrtpContext::unprotect → RTP/RTCP 分发
 // ==============================
 void PacketRouter::handleSrtp(const uint8_t* data, size_t len,
                               const boost::asio::ip::udp::endpoint& ep) {
@@ -107,8 +112,17 @@ void PacketRouter::handleSrtp(const uint8_t* data, size_t len,
     memcpy(buf, data, len);
     int bufLen = static_cast<int>(len);
 
-    if (srtp->unprotect(buf, &bufLen)) {
-        // ✅ 解密成功, buf 内容是明文 RTP 包
-        // 🔲 Day 16-17: 明文 RTP → Router → 转发给其他 Peer
+    if (!srtp->unprotect(buf, &bufLen)) return;
+
+    // 解密成功 → 通过 PT 字节区分 RTP / RTCP
+    //   RTP:  PT < 128  (0-127)
+    //   RTCP: PT 200-223 → 发给 RtcpHandler
+    if (bufLen >= 2) {
+        uint8_t pt = buf[1];
+        if (pt >= 200 && pt <= 223 && _rtcp) {
+            _rtcp->onRtcpPacket(buf, static_cast<size_t>(bufLen));
+        } else {
+            // ✅ 明文 RTP — 🔲 Day 16-17: Router → 查表 → 转发给其他 Peer
+        }
     }
 }
