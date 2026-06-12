@@ -21,6 +21,9 @@ public:
                                     const std::string& keyFile  = "");
     static void cleanupGlobals();
 
+    // 获取全局证书 SHA-256 指纹（用于 SDP Answer 生成）
+    static const std::string& fingerprint() { return _certFingerprint; }
+
     // === 每个 Peer ===
     void setSendCallback(SendCallback cb);
 

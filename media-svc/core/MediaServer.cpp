@@ -76,6 +76,11 @@ void MediaServer::setupComponents() {
                                const boost::asio::ip::udp::endpoint& ep) {
         _pktRouter->onPacket(data, len, ep);
     });
+
+    // 注入 SFU 依赖到 gRPC（Go 通过 gRPC 调用创建/销毁转发关系）
+    _grpcServer->setRouter(_router);
+    _grpcServer->setIceServer(_ice);
+    _grpcServer->setPacketRouter(_pktRouter);
 }
 
 void MediaServer::setupSignals() {

@@ -14,6 +14,9 @@ service MediaService {
   rpc SendIceCandidate(SendIceCandidateReq) returns (SendIceCandidateResp);
   rpc MuteTrack       (MuteTrackReq)        returns (MuteTrackResp);
   rpc GetRoomStats    (RoomStatsReq)        returns (RoomStatsResp);
+
+  // -- SFU 转发关系管理 (Go → C++) --
+  rpc AddForwarding   (AddForwardingReq)    returns (AddForwardingResp);
 }
 
 // ==========================================
@@ -40,19 +43,19 @@ message DestroyRoomResp {
 
 // -- 参会者管理 --
 message AddPeerReq {
-  string room_id = 1;
-  string peer_id = 2;
-  string token   = 3;
+  string peer_id = 1;    // 浏览器传来的用户标识
 }
 
 message AddPeerResp {
-  string sfu_ip   = 1;
-  int32  sfu_port = 2;
+  string sfu_ip           = 1;
+  int32  sfu_port         = 2;
+  string ice_ufrag        = 3;  // ICE-lite ufrag (写入 SDP Answer)
+  string ice_pwd          = 4;  // ICE-lite pwd  (写入 SDP Answer)
+  string dtls_fingerprint = 5;  // SHA-256 指纹  (写入 SDP Answer)
 }
 
 message RemovePeerReq {
-  string room_id = 1;
-  string peer_id = 2;
+  string peer_id = 1;
 }
 
 message RemovePeerResp {
@@ -99,4 +102,14 @@ message RoomStatsReq {
 
 message RoomStatsResp {
   int32 peer_count = 1;
+}
+
+// -- 转发关系 (Go → C++) --
+message AddForwardingReq {
+  string from_peer_id = 1;  // 谁的媒体流需要转发
+  string to_peer_id   = 2;  // 转发给谁
+}
+
+message AddForwardingResp {
+  bool success = 1;
 }
