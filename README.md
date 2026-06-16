@@ -7,33 +7,46 @@
 [![C++](https://img.shields.io/badge/C++-17-00599C?logo=c%2B%2B)](https://isocpp.org/)
 [![gRPC](https://img.shields.io/badge/gRPC-1.51+-244c5a)](https://grpc.io/)
 
-从零实现的 WebRTC SFU 视频会议系统。Go 负责信令调度与房间管理，C++ 负责 DTLS/SRTP 加解密与选择性转发（SFU），前端使用浏览器原生 WebRTC API，预留 AI 对话总结扩展位。
+从零实现的 WebRTC SFU 视频会议系统。Go 负责信令调度与房间管理，C++ 负责 ICE/DTLS/SRTP 与选择性转发（SFU），前端使用浏览器原生 WebRTC API。
 
-
----
 
 ## 快速开始
 
+### 本地开发（Ubuntu 24.04 / WSL2）
+
 ```bash
-# 1. 安装依赖（Ubuntu 24.04）
+# 1. 安装依赖
 sudo apt install -y build-essential cmake pkg-config \
-    libboost-dev libsrtp2-dev libspdlog-dev \
+    libboost-dev libsrtp2-dev libspdlog-dev libyaml-cpp-dev \
     libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc \
-    golang-go nodejs npm docker.io
+    libssl-dev zlib1g-dev golang-go
 
 go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
-# 2. 构建
+# 2. 编译
+export GOTOOLCHAIN=auto  # Go 自动下载合适工具链
 make build
 
 # 3. 启动
-./scripts/dev.sh
+./media-svc/build/media-svc &    # C++ SFU
+./build/signal-svc &             # Go 信令
 
-# 4. 打开浏览器
-# http://localhost:3000
+# 4. 浏览器打开 localhost:8080，创建房间即可测试
 ```
 
+### Docker 部署（云服务器）
+
+```bash
+# 修改 configs/media-svc.yaml 的 public_ip 为服务器公网 IP
+# 或设置环境变量（推荐）：
+PUBLIC_IP=1.2.3.4 docker compose up -d --build
+
+# 腾讯云等国内服务器需先配镜像加速：
+sudo mkdir -p /etc/docker
+echo '{"registry-mirrors":["https://mirror.ccs.tencentyun.com"]}' | sudo tee /etc/docker/daemon.json
+sudo systemctl restart docker
+```
 
 ---
 
@@ -47,9 +60,9 @@ make build
 
 | 服务 | 语言 | 端口 | 职责 |
 |------|------|------|------|
-| **signal-svc** | Go | :8080 HTTP / :8081 WS | REST API、WebSocket 信令、房间管理 |
-| **media-svc** | C++ | :50051 gRPC / UDP 10000-20000 | DTLS 握手、SRTP 加解密、SFU 路由转发 |
-| **web** | HTML/JS | :3000 | 浏览器原生 WebRTC，零外部依赖 |
+| **signal-svc** | Go | :8080 | REST API、WebSocket 信令、房间管理、前端静态文件 |
+| **media-svc** | C++ | :50051 gRPC / UDP 10000 | ICE-lite、DTLS 握手、SRTP 加解密、SFU 路由转发 |
+| **web** | HTML/JS | — | 浏览器原生 WebRTC，Go 直接托管 |
 
 ---
 
@@ -62,11 +75,23 @@ namecon/
 ├── docker-compose.yml
 ├── proto/media/              # gRPC 协议定义 (Go & C++ 共享)
 ├── configs/                  # 服务配置文件
-├── scripts/                  # 构建 & 开发脚本
+│   ├── media-svc.yaml        #   public_ip: SFU 公网地址
+│   └── signal-svc.yaml       #   host: media-svc (Docker) / 127.0.0.1 (本地)
+├── scripts/                  # 构建脚本
 ├── deploy/                   # Docker 部署文件
+│   ├── Dockerfile.media-svc
+│   ├── Dockerfile.signal-svc
+│   └── docker-compose.prod.yml
 ├── web/                      # 前端 (原生 HTML/JS)
 ├── signal-svc/               # Go 信令服务
-├── media-svc/                # C++ 媒体引擎
+└── media-svc/                # C++ 媒体引擎
+    ├── transport/            #   UDP、ICE、DTLS、SRTP
+    ├── sfu/                  #   Router、RouteTable、Peer
+    ├── sdp/                  #   SDP 解析与生成
+    ├── rtcp/                 #   RTCP 解析与构造
+    ├── rtp/                  #   RTP 头解析
+    ├── grpc/                 #   gRPC 服务实现
+    └── core/                 #   启动、配置
 ```
 
 ---
@@ -82,6 +107,8 @@ namecon/
 | C++ DTLS | OpenSSL 3.0+ |
 | C++ SRTP | libsrtp 2.5+ |
 | C++ gRPC | gRPC C++ 1.51+ |
+| C++ CRC32 | zlib (`crc32()`) |
+| C++ 配置 | yaml-cpp |
 | C++ 日志 | `spdlog` |
 | 构建 | CMake 3.20+ / Go Module |
 | 部署 | Docker + Docker Compose |
