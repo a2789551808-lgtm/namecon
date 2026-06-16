@@ -4,27 +4,17 @@
 #include <random>
 #include <arpa/inet.h>
 #include <openssl/hmac.h>
+#include <zlib.h>
 #include <iostream>
 
 // STUN 消息头 (20 字节)
-//  0                   1                   2                   3
-//  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |         Message Type          |         Message Length        |
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |                         Magic Cookie                          |
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |                                                               |
-// |                     Transaction ID (96 bits)                  |
-// |                                                               |
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
 static const uint32_t STUN_MAGIC_COOKIE      = 0x2112A442;
 static const uint16_t BINDING_REQUEST        = 0x0001;
 static const uint16_t BINDING_RESPONSE       = 0x0101;
 static const uint16_t ATTR_XOR_MAPPED        = 0x0020;
 static const uint16_t ATTR_USERNAME          = 0x0006;
 static const uint16_t ATTR_MESSAGE_INTEGRITY = 0x0008;
+static const uint16_t ATTR_FINGERPRINT       = 0x8028;
 static const size_t   STUN_HEADER_SIZE       = 20;
 
 // 随机字符串
@@ -66,18 +56,20 @@ void IceServer::onStunPacket(const uint8_t* data, size_t len,
     cookie = ntohl(cookie);
     if (cookie != STUN_MAGIC_COOKIE) return;
 
-    // ✅ 验证凭据：USERNAME 含 ufrag + MESSAGE-INTEGRITY 校验 pwd
+    // ✅ 验证凭据
     std::string peerUfrag;
     if (!validateCredentials(data, len, peerUfrag)) {
         std::cerr << "[IceServer] Credential validation failed from "
                   << remote.address().to_string() << ":" << remote.port()
                   << std::endl;
-        return;  // 不回复 = 告诉浏览器 "你发错了"
+        return;
     }
 
-    std::cout << "[IceServer] Validated peer ufrag=" << peerUfrag
-              << " from " << remote.address().to_string()
-              << ":" << remote.port() << std::endl;
+    static int okCount = 0;
+    if (++okCount <= 5) {
+        std::cout << "[IceServer] ✅ STUN OK peer=" << peerUfrag
+                  << " from " << remote.address().to_string() << ":" << remote.port() << std::endl;
+    }
 
     sendResponse(data, len, remote);
 }
@@ -140,31 +132,30 @@ bool IceServer::validateCredentials(const uint8_t* data, size_t len,
     if (!miPos || outPeerUfrag.empty()) return false;
 
     // ---- 构造 HMAC 输入 ----
-    // 复制包，把 length 字段改为到 MI 末尾的长度，把 MI 的 20 字节 value 清零
-    size_t msgEnd = miValPos + 20;  // 到 HMAC 值末尾
-    if (msgEnd > len) return false;
+    // RFC 5389 §15.4: HMAC 计算时 MESSAGE-INTEGRITY 属性还不存在
+    // 所以 HMAC 输入 = STUN 消息去掉整个 MESSAGE-INTEGRITY 属性（header+value）
+    // length 字段保持调整后的值（包含 MI 属性大小）
+    size_t miAttrStart = miPos - data;  // MI 属性起始偏移
+    size_t hmacInputLen = miAttrStart;  // HMAC 输入 = MI 之前的所有内容
 
     static uint8_t buf[4096];
-    size_t copyLen = msgEnd;
-    if (copyLen > sizeof(buf)) return false;
-    memcpy(buf, data, copyLen);
+    if (hmacInputLen > sizeof(buf)) return false;
+    memcpy(buf, data, hmacInputLen);
 
-    // ① 修改消息头 length 字段 (bytes 2-3)
-    uint16_t newLen = htons(static_cast<uint16_t>(msgEnd - STUN_HEADER_SIZE));
+    // ① 修改消息头 length 字段 = 到 MI 属性末尾（包含 MI 但不包含 FINGERPRINT）
+    //    miValPos + 20 = MI 属性末尾偏移
+    uint16_t newLen = htons(static_cast<uint16_t>(miValPos + 20 - STUN_HEADER_SIZE));
     memcpy(buf + 2, &newLen, 2);
 
-    // ② 清零 HMAC 值
-    memset(buf + miValPos, 0, 20);
-
-    // ③ HMAC-SHA1(_icePwd, buf[0..msgEnd-1])
+    // ② HMAC-SHA1(_icePwd, buf[0..hmacInputLen-1])
     unsigned int hmacLen = 20;
     uint8_t      hmac[20];
     HMAC(EVP_sha1(),
          _icePwd.data(), static_cast<int>(_icePwd.size()),
-         buf, msgEnd,
+         buf, hmacInputLen,
          hmac, &hmacLen);
 
-    // ④ 比较
+    // ③ 比较
     if (memcmp(hmac, data + miValPos, 20) != 0) {
         std::cerr << "[IceServer] MESSAGE-INTEGRITY mismatch" << std::endl;
         return false;
@@ -175,6 +166,8 @@ bool IceServer::validateCredentials(const uint8_t* data, size_t len,
 
 // ============================================================
 // 构造 Binding Response + MESSAGE-INTEGRITY
+//
+// HMAC 计算：取 MESSAGE-INTEGRITY 属性之前的所有内容（不含 MI 属性本身）
 // ============================================================
 void IceServer::sendResponse(const uint8_t* request, size_t /*reqLen*/,
                              const boost::asio::ip::udp::endpoint& remote) {
@@ -200,38 +193,58 @@ void IceServer::sendResponse(const uint8_t* request, size_t /*reqLen*/,
 
         response[respLen++] = 0;                              // reserved
         response[respLen++] = 0x01;                           // IPv4
-        uint16_t xorPort = htons(remote.port()) ^ (STUN_MAGIC_COOKIE >> 16);
-        uint32_t ipRaw   = htonl(remote.address().to_v4().to_uint());
-        uint32_t xorIp   = ipRaw ^ STUN_MAGIC_COOKIE;
+        // RFC 5389 §15.2: X-Port = htons(port_host ^ (magic>>16)), X-Addr = htonl(ip_host ^ magic)
+        uint16_t xorPort = htons(remote.port() ^ (STUN_MAGIC_COOKIE >> 16));
+        uint32_t ipHost  = remote.address().to_v4().to_uint();
+        uint32_t xorIp   = htonl(ipHost ^ STUN_MAGIC_COOKIE);
         memcpy(response + respLen, &xorPort, 2); respLen += 2;
         memcpy(response + respLen, &xorIp,   4); respLen += 4;
     }
 
-    // --- MESSAGE-INTEGRITY (24): type(2) + len(2) + hmac(20) ---
+    // --- 保存 MI 之前的长度（用于 HMAC 计算）---
+    size_t preMiLen = respLen;  // HMAC 输入到此为止
+
+    // --- 计算 HMAC（不含 MI 属性，length=到MI末尾不含FP）---
     {
+        uint16_t lenForHmac = htons(static_cast<uint16_t>(respLen - STUN_HEADER_SIZE + 24));
+        memcpy(response + 2, &lenForHmac, 2);
+
+        uint8_t hmacVal[20];
+        unsigned int hmacLen2 = 20;
+        HMAC(EVP_sha1(),
+             _icePwd.data(), static_cast<int>(_icePwd.size()),
+             response, preMiLen,
+             hmacVal, &hmacLen2);
+
+        // --- 追加 MESSAGE-INTEGRITY (24) ---
         uint16_t type = htons(ATTR_MESSAGE_INTEGRITY);
         uint16_t alen = htons(20);
         memcpy(response + respLen, &type, 2); respLen += 2;
         memcpy(response + respLen, &alen, 2); respLen += 2;
+        memcpy(response + respLen, hmacVal, 20); respLen += 20;
+    }
 
-        // 先填 0，算 HMAC 后再覆盖
-        size_t hmacPos = respLen;
-        memset(response + respLen, 0, 20);
-        respLen += 20;
+    // --- 设为最终 length（含 FP），再算 FINGERPRINT ---
+    {
+        uint16_t finalLen = htons(static_cast<uint16_t>(respLen - STUN_HEADER_SIZE + 8));
+        memcpy(response + 2, &finalLen, 2);
 
-        // 回填消息头 length（到 MI 末尾）
-        uint16_t msgLen = htons(static_cast<uint16_t>(respLen - STUN_HEADER_SIZE));
-        memcpy(response + 2, &msgLen, 2);
+        uint32_t fpVal = crc32(0, response, respLen) ^ 0x5354554E;
 
-        // HMAC-SHA1(_icePwd, response[0..respLen-1])
-        unsigned int hmacLen2 = 20;
-        HMAC(EVP_sha1(),
-             _icePwd.data(), static_cast<int>(_icePwd.size()),
-             response, respLen,
-             response + hmacPos, &hmacLen2);
+        uint16_t type = htons(ATTR_FINGERPRINT);
+        uint16_t alen = htons(4);
+        memcpy(response + respLen, &type, 2); respLen += 2;
+        memcpy(response + respLen, &alen, 2); respLen += 2;
+        uint32_t fpNet = htonl(fpVal);
+        memcpy(response + respLen, &fpNet, 4); respLen += 4;
     }
 
     if (_sendCb) {
+        static int sendCount = 0;
+        if (++sendCount <= 5) {
+            std::cout << "[IceServer] 📤 Sent response to "
+                      << remote.address().to_string() << ":" << remote.port() << std::endl;
+        }
         _sendCb(response, respLen, remote);
     }
 }

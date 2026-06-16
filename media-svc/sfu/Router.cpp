@@ -55,7 +55,12 @@ void Router::onRtpPacket(const uint8_t* plainRtp, size_t len, Peer* fromPeer) {
 
     // ③ sender 的转发目标
     auto& targets = sender->forwardTo;
-    if (targets.empty()) return;
+    if (targets.empty()) {
+        static int emptyCount = 0;
+        if (++emptyCount <= 5)
+            std::cout << "[Router] No forward targets for SSRC=" << hdr.ssrc << std::endl;
+        return;
+    }
 
     // ④ 更新转发统计
     sender->forwardedPackets++;
@@ -63,14 +68,32 @@ void Router::onRtpPacket(const uint8_t* plainRtp, size_t len, Peer* fromPeer) {
 
     // ⑤ 对每个目标：重加密 → 发出
     for (auto* target : targets) {
-        if (!target->srtp) continue;
+        if (!target->srtp) {
+            static int noSrtpCount = 0;
+            if (++noSrtpCount <= 5)
+                std::cout << "[Router] No SRTP for target " << target->peerId << std::endl;
+            continue;
+        }
 
         uint8_t out[65536];
         memcpy(out, plainRtp, len);
         int outLen = static_cast<int>(len);
 
         if (target->srtp->protect(out, &outLen)) {
+            static int fwdCount = 0;
+            if (++fwdCount <= 3) {
+                std::cout << "[Router] FWD #" << fwdCount
+                          << " SSRC=" << hdr.ssrc << " PT=" << (int)hdr.payloadType
+                          << " seq=" << hdr.sequenceNumber
+                          << " " << len << "→" << outLen << "B → " << target->peerId << std::endl;
+            }
             _udp->sendTo(out, static_cast<size_t>(outLen), target->remoteEp);
+        } else {
+            static int errCount = 0;
+            if (++errCount <= 3) {
+                std::cerr << "[Router] ❌ protect FAILED for " << target->peerId
+                          << " (srtp inited=" << (target->srtp != nullptr) << ")" << std::endl;
+            }
         }
     }
 }

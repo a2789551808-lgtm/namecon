@@ -25,7 +25,10 @@ public:
     void onPacket(const uint8_t* data, size_t len,
                   const boost::asio::ip::udp::endpoint& ep);
 
-    // 获取或创建 Peer（外部可通过此接口绑定 roomId 等）
+    // 预注册 Peer（MediaServiceImpl::AddPeer 调用）
+    void registerPeer(std::shared_ptr<Peer> peer);
+
+    // 获取或创建 Peer
     std::shared_ptr<Peer> getOrCreatePeer(
         const boost::asio::ip::udp::endpoint& ep);
 
@@ -43,4 +46,8 @@ private:
     std::unordered_map<boost::asio::ip::udp::endpoint,
                        std::shared_ptr<Peer>> _peerMap;
     std::mutex _peerMutex;
+
+    // AddPeer 预注册的 Peer（等待 DTLS 连接绑定 endpoint）
+    std::unordered_map<std::string, std::shared_ptr<Peer>> _pendingPeers;
+    std::mutex _pendingMutex;
 };

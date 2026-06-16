@@ -37,8 +37,7 @@ void UdpServer::onReceive(const boost::system::error_code& ec, size_t bytesRead)
     if (_onReceive) {
         _onReceive(_recvBuffer, bytesRead, _remoteEp);
     }
-
-    doReceive();  // 收完一个继续收下一个
+    doReceive();
 }
 
 void UdpServer::sendTo(const uint8_t* data, size_t len,

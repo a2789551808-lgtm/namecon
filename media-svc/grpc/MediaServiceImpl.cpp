@@ -5,9 +5,25 @@
 #include "../transport/PacketRouter.h"
 #include "../transport/DtlsContext.h"
 #include "../sdp/SdpParser.h"
+#include "../config/ConfigMgr.h"
 #include <ctime>
 #include <random>
+#include <cstdlib>
 #include <iostream>
+
+// 获取 SFU 的公网 IP：环境变量 > 配置文件 > 默认 127.0.0.1
+static std::string getPublicIp() {
+    // ① 环境变量 PUBLIC_IP（最高优先级，用于 Docker 部署）
+    const char* envIp = std::getenv("PUBLIC_IP");
+    if (envIp && envIp[0] != '\0') return envIp;
+
+    // ② 配置文件 server.public_ip
+    auto cfgIp = ConfigMgr::GetInstance()["server"]["public_ip"];
+    if (!cfgIp.empty()) return cfgIp;
+
+    // ③ 默认（本地调试）
+    return "127.0.0.1";
+}
 
 // ============================================================
 // CreateRoom — 生成唯一房号（Go 侧用）
@@ -46,7 +62,12 @@ grpc::Status MediaServiceImpl::AddPeer(
         _peers[peer->peerId] = peer;
     }
 
-    resp->set_sfu_ip("127.0.0.1");
+    // 注册到 PacketRouter（DTLS 连接后会自动绑定 endpoint）
+    if (_pktRouter) {
+        _pktRouter->registerPeer(peer);
+    }
+
+    resp->set_sfu_ip(getPublicIp());
     resp->set_sfu_port(10000);
 
     if (_ice) {
@@ -61,7 +82,7 @@ grpc::Status MediaServiceImpl::AddPeer(
 }
 
 // ============================================================
-// SendOffer — 解析浏览器 SDP Offer，生成 SFU Answer
+// SendOffer — 解析浏览器 SDP Offer，生成 SFU Answer（使用真实凭据）
 // ============================================================
 grpc::Status MediaServiceImpl::SendOffer(
     grpc::ServerContext* /*ctx*/,
@@ -69,13 +90,25 @@ grpc::Status MediaServiceImpl::SendOffer(
     media::SendOfferResp* resp)
 {
     SdpParser parser;
+
+    if (_ice) {
+        parser.setServerInfo(
+            getPublicIp(),                              // IP（从配置读取）
+            10000,                                          // UDP 端口
+            _ice->getIceUfrag(),                            // ufrag
+            _ice->getIcePwd(),                              // pwd
+            DtlsContext::fingerprint()                      // DTLS 指纹
+        );
+    }
+
     std::string answer = parser.generateAnswer(req->sdp());
     if (answer.empty()) {
-        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                            "Failed to parse SDP offer");
+        // SDP 解析失败（如无 media track），返回空 answer 而不报错
+        // 浏览器会在 getUserMedia 成功后重试
+        std::cerr << "[gRPC] SendOffer: empty answer (no media in offer?)" << std::endl;
+        return grpc::Status::OK;  // 不阻止连接建立
     }
     resp->set_answer_sdp(answer);
-
     std::cout << "[gRPC] SendOffer: " << req->peer_id()
               << " → answer " << answer.size() << " bytes" << std::endl;
     return grpc::Status::OK;

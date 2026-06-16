@@ -7,5 +7,5 @@ jwt:
   expire_hours: 24
 
 media_service:
-  host: "127.0.0.1"
+  host: "media-svc"  # Docker 内部主机名
   port: 50051

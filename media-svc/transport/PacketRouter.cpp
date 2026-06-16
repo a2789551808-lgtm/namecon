@@ -8,6 +8,7 @@
 #include "../sfu/Router.h"
 #include <iostream>
 #include <cstring>
+#include <arpa/inet.h>
 
 PacketRouter::PacketRouter(std::shared_ptr<UdpServer> udp)
     : _udp(std::move(udp))
@@ -26,13 +27,29 @@ void PacketRouter::setRouter(std::shared_ptr<Router> router) {
     _router = std::move(router);
 }
 
+void PacketRouter::registerPeer(std::shared_ptr<Peer> peer) {
+    std::lock_guard<std::mutex> lock(_pendingMutex);
+    _pendingPeers[peer->peerId] = peer;
+}
+
 std::shared_ptr<Peer> PacketRouter::getOrCreatePeer(
     const boost::asio::ip::udp::endpoint& ep) {
     std::lock_guard<std::mutex> lock(_peerMutex);
     auto it = _peerMap.find(ep);
     if (it != _peerMap.end()) return it->second;
 
-    auto peer = std::make_shared<Peer>();
+    // 尝试使用预注册的 Peer（AddPeer 时创建）
+    std::shared_ptr<Peer> peer;
+    {
+        std::lock_guard<std::mutex> lock2(_pendingMutex);
+        if (!_pendingPeers.empty()) {
+            peer = _pendingPeers.begin()->second;
+            _pendingPeers.erase(_pendingPeers.begin());
+        }
+    }
+    if (!peer) {
+        peer = std::make_shared<Peer>();
+    }
     peer->remoteEp = ep;
     _peerMap[ep] = peer;
     return peer;
@@ -40,6 +57,9 @@ std::shared_ptr<Peer> PacketRouter::getOrCreatePeer(
 
 // ==============================
 // 协议分类入口
+// STUN: 前2bit=00, 且 magic cookie (offset 4-7) = 0x2112A442
+// DTLS: 首字节 20-64 (但前2bit=00, 可能被STUN误判)
+// RTP/RTCP: 首字节 >= 128
 // ==============================
 void PacketRouter::onPacket(const uint8_t* data, size_t len,
                             const boost::asio::ip::udp::endpoint& ep) {
@@ -47,9 +67,20 @@ void PacketRouter::onPacket(const uint8_t* data, size_t len,
 
     uint8_t firstByte = data[0];
 
-    if ((firstByte & 0xC0) == 0) {
-        handleStun(data, len, ep);
-    } else if (firstByte >= 20 && firstByte <= 64) {
+    // 先检查 STUN magic cookie（最可靠）
+    if (len >= 20 && data[0] == 0x00 && data[1] <= 0x03) {
+        // 前2bit=00 且 type 在 STUN 范围 (0x0000-0x03FF)
+        // 再检查 magic cookie
+        uint32_t cookie;
+        memcpy(&cookie, data + 4, 4);
+        cookie = ntohl(cookie);
+        if (cookie == 0x2112A442) {
+            handleStun(data, len, ep);
+            return;
+        }
+    }
+
+    if (firstByte >= 20 && firstByte <= 64) {
         handleDtls(data, len, ep);
     } else if (firstByte >= 128) {
         handleSrtp(data, len, ep);
@@ -92,7 +123,13 @@ void PacketRouter::handleDtls(const uint8_t* data, size_t len,
         std::string keys = peer->dtls->exportSrtpKeys();
         if (!keys.empty() && srtp->init(keys)) {
             peer->srtp = srtp;
-            std::cout << "[PacketRouter] SRTP ready for "
+            std::cout << "==============================================" << std::endl;
+            std::cout << "[PacketRouter] ✅ SRTP READY for " << peer->peerId
+                      << " @ " << ep.address().to_string() << ":" << ep.port()
+                      << std::endl;
+            std::cout << "==============================================" << std::endl;
+        } else {
+            std::cerr << "[PacketRouter] ❌ SRTP init FAILED for "
                       << ep.address().to_string() << ":" << ep.port() << std::endl;
         }
     }
