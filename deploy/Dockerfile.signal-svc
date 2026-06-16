@@ -1,8 +1,12 @@
 FROM golang:1.22-alpine AS builder
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOTOOLCHAIN=auto
 WORKDIR /app
 COPY signal-svc/ .
 RUN go build -o signal-svc .
 FROM alpine:3.20
 COPY --from=builder /app/signal-svc /usr/local/bin/
 COPY configs/signal-svc.yaml /etc/namecon/
-CMD ["signal-svc", "--config", "/etc/namecon/signal-svc.yaml"]
+COPY web/ /app/web/
+WORKDIR /app
+CMD ["signal-svc", "/etc/namecon/signal-svc.yaml"]

@@ -1,22 +1,22 @@
-version: "3.8"
 services:
   media-svc:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.media-svc
     ports:
-      - "50051:50051"
-      - "10000-20000:10000-20000/udp"
+      - "10000:10000/udp"
+    environment:
+      - PUBLIC_IP=${PUBLIC_IP:-127.0.0.1}
+    restart: unless-stopped
+
   signal-svc:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.signal-svc
     ports:
       - "8080:8080"
-      - "8081:8081"
-  web:
-    image: nginx:alpine
-    volumes:
-      - ../web:/usr/share/nginx/html
-    ports:
-      - "3000:80"
+    environment:
+      - PUBLIC_IP=${PUBLIC_IP:-127.0.0.1}
+    depends_on:
+      - media-svc
+    restart: unless-stopped

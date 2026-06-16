@@ -1,10 +1,10 @@
 FROM ubuntu:24.04 AS builder
-RUN apt update && apt install -y build-essential cmake libboost-dev libssl-dev libsrtp2-dev libspdlog-dev libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc
+RUN apt update && apt install -y build-essential cmake libboost-dev libssl-dev libsrtp2-dev libspdlog-dev libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc libyaml-cpp-dev
 WORKDIR /app
 COPY media-svc/ .
 RUN mkdir build && cd build && cmake .. && make -j$(nproc)
 FROM ubuntu:24.04
-RUN apt update && apt install -y libgrpc++1.51 libsrtp2-1 libspdlog1.12
+RUN apt update && apt install -y libgrpc++1.51 libsrtp2-1 libspdlog1.12 libyaml-cpp0.8
 COPY --from=builder /app/build/media-svc /usr/local/bin/
 COPY configs/media-svc.yaml /etc/namecon/
 CMD ["media-svc", "/etc/namecon/media-svc.yaml"]
