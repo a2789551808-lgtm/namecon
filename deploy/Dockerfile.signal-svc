@@ -6,7 +6,7 @@ COPY signal-svc/ .
 RUN go build -o signal-svc .
 FROM alpine:3.20
 COPY --from=builder /app/signal-svc /usr/local/bin/
-COPY configs/signal-svc.yaml /etc/namecon/
+COPY configs/signal-svc.ini /etc/namecon/
 COPY web/ /app/web/
 WORKDIR /app
-CMD ["signal-svc", "/etc/namecon/signal-svc.yaml"]
+CMD ["signal-svc", "/etc/namecon/signal-svc.ini"]

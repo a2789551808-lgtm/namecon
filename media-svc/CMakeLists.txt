@@ -10,7 +10,6 @@ find_package(OpenSSL REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_package(spdlog REQUIRED)
-find_package(yaml-cpp REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SRTP2 REQUIRED libsrtp2)
 
@@ -115,7 +114,6 @@ target_link_libraries(media-svc
     protobuf::libprotobuf
     gRPC::grpc++
     spdlog::spdlog
-    yaml-cpp::yaml-cpp
     ${SRTP2_LIBRARIES}
 )
 

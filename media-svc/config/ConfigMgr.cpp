@@ -1,29 +1,53 @@
 #include "ConfigMgr.h"
-#include <yaml-cpp/yaml.h>
+#include <fstream>
 #include <iostream>
+#include <algorithm>
 
 void ConfigMgr::Load(const std::string& path) {
-    try {
-        YAML::Node root = YAML::LoadFile(path);
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        std::cerr << "[config] Cannot open " << path << " — using defaults" << std::endl;
+        return;
+    }
 
-        // 遍历所有 section，将 key-value 全部转为字符串存入 _config_map
-        for (const auto& section_pair : root) {
-            const std::string& section_name = section_pair.first.as<std::string>();
-            const YAML::Node& section_node  = section_pair.second;
+    std::string line, currentSection;
+    while (std::getline(file, line)) {
+        // 去首尾空格和注释
+        auto trim = [](std::string& s) {
+            s.erase(0, s.find_first_not_of(" \t\r"));
+            size_t end = s.find_last_not_of(" \t\r");
+            if (end != std::string::npos) s.erase(end + 1);
+            // 去掉行尾注释 (# 或 ;)
+            size_t comment = s.find_first_of("#;");
+            if (comment != std::string::npos) s.erase(comment);
+        };
+        trim(line);
+        if (line.empty()) continue;
 
-            SectionInfo sectionInfo;
-            if (section_node.IsMap()) {
-                for (const auto& kv : section_node) {
-                    std::string key = kv.first.as<std::string>();
-                    std::string val = kv.second.as<std::string>();
-                    sectionInfo._section_datas[key] = val;
-                }
-            }
-            _config_map[section_name] = sectionInfo;
+        // [section]
+        if (line.front() == '[' && line.back() == ']') {
+            currentSection = line.substr(1, line.size() - 2);
+            continue;
         }
-    } catch (const YAML::Exception& e) {
-        std::cerr << "[config] YAML parse warning: " << e.what()
-                  << " — using defaults" << std::endl;
+
+        // key = value
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+
+        std::string key = line.substr(0, eq);
+        std::string val = line.substr(eq + 1);
+        trim(key);
+        trim(val);
+
+        // 去引号
+        if (val.size() >= 2 && ((val.front() == '"' && val.back() == '"') ||
+                                  (val.front() == '\'' && val.back() == '\''))) {
+            val = val.substr(1, val.size() - 2);
+        }
+
+        if (!currentSection.empty() && !key.empty()) {
+            _config_map[currentSection]._section_datas[key] = val;
+        }
     }
 
     // 输出加载结果

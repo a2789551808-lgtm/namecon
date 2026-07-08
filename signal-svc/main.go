@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	configPath := "configs/signal-svc.yaml"
+	configPath := "configs/signal-svc.ini"
 	if len(os.Args) > 1 {
 		configPath = os.Args[1]
 	}

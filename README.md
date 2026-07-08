@@ -38,7 +38,7 @@ make build
 ### Docker 部署（云服务器）
 
 ```bash
-# 修改 configs/media-svc.yaml 的 public_ip 为服务器公网 IP
+# 修改 configs/media-svc.ini 的 public_ip 为服务器公网 IP
 # 或设置环境变量（推荐）：
 PUBLIC_IP=1.2.3.4 docker compose up -d --build
 
@@ -75,8 +75,8 @@ namecon/
 ├── docker-compose.yml
 ├── proto/media/              # gRPC 协议定义 (Go & C++ 共享)
 ├── configs/                  # 服务配置文件
-│   ├── media-svc.yaml        #   public_ip: SFU 公网地址
-│   └── signal-svc.yaml       #   host: media-svc (Docker) / 127.0.0.1 (本地)
+│   ├── media-svc.ini         #   public_ip = SFU 公网地址
+│   └── signal-svc.ini        #   host = media-svc (Docker) / 127.0.0.1 (本地)
 ├── scripts/                  # 构建脚本
 ├── deploy/                   # Docker 部署文件
 │   ├── Dockerfile.media-svc
@@ -108,7 +108,7 @@ namecon/
 | C++ SRTP | libsrtp 2.5+ |
 | C++ gRPC | gRPC C++ 1.51+ |
 | C++ CRC32 | zlib (`crc32()`) |
-| C++ 配置 | yaml-cpp |
+| C++ 配置 | 手写 INI 解析 |
 | C++ 日志 | `spdlog` |
 | 构建 | CMake 3.20+ / Go Module |
 | 部署 | Docker + Docker Compose |

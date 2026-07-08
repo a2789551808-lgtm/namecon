@@ -3,7 +3,7 @@
 
 int main(int argc, char* argv[]) {
     try {
-        std::string configPath = "configs/media-svc.yaml";
+        std::string configPath = "configs/media-svc.ini";
         if (argc > 1) configPath = argv[1];
 
         MediaServer server(configPath);

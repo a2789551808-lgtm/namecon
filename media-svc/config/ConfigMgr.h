@@ -16,7 +16,7 @@ struct SectionInfo {
     }
 };
 
-// 配置管理器单例 — 从 YAML 加载，按 section/key 访问
+// 配置管理器单例 — 从 INI 加载，按 section/key 访问
 class ConfigMgr : public Singleton<ConfigMgr> {
     friend class Singleton<ConfigMgr>;
 
