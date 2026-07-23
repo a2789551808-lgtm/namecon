@@ -3,7 +3,7 @@
 > C++ 媒体引擎 + Go 信令服务器 + Web 前端
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev/)
 [![C++](https://img.shields.io/badge/C++-17-00599C?logo=c%2B%2B)](https://isocpp.org/)
 [![gRPC](https://img.shields.io/badge/gRPC-1.51+-244c5a)](https://grpc.io/)
 
@@ -17,7 +17,7 @@
 ```bash
 # 1. 安装依赖
 sudo apt install -y build-essential cmake pkg-config \
-    libboost-dev libsrtp2-dev libspdlog-dev libyaml-cpp-dev \
+    libboost-dev libsrtp2-dev libspdlog-dev \
     libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc \
     libssl-dev zlib1g-dev golang-go
 
@@ -109,7 +109,7 @@ namecon/
 | C++ gRPC | gRPC C++ 1.51+ |
 | C++ CRC32 | zlib (`crc32()`) |
 | C++ 配置 | 手写 INI 解析 |
-| C++ 日志 | `spdlog` |
+| C++ 日志 | `spdlog`（链接但未使用，实际用 std::cout） |
 | 构建 | CMake 3.20+ / Go Module |
 | 部署 | Docker + Docker Compose |
 
