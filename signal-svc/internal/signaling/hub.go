@@ -19,10 +19,10 @@ var upgrader = websocket.Upgrader{
 
 // Hub WebSocket 连接管理中心
 type Hub struct {
-	roomMgr  *room.Manager
-	sfu      *sfu.Client
-	mu       sync.RWMutex
-	clients  map[*Client]bool // 所有连接
+	roomMgr *room.Manager
+	sfu     *sfu.Client
+	mu      sync.RWMutex
+	clients map[*Client]bool // 所有连接
 }
 
 func NewHub(mgr *room.Manager, sfuClient *sfu.Client) *Hub {
@@ -121,22 +121,38 @@ func (h *Hub) handleJoin(client *Client, msg Message) {
 
 	client.peerID = p.ID
 	client.roomID = join.RoomID
+	client.username = join.Username
 
-	// 告诉客户端: 连接就绪
+	// 收集房间内已有参与者（通知新加入者）
+	existingPeers := []map[string]string{}
+	h.mu.RLock()
+	for c := range h.clients {
+		if c.roomID == join.RoomID && c != client && c.peerID != "" {
+			existingPeers = append(existingPeers, map[string]string{
+				"peer_id":  c.peerID,
+				"username": c.username,
+			})
+		}
+	}
+	h.mu.RUnlock()
+
+	// 告诉客户端: 连接就绪 + 已有参与者
 	h.sendToClient(client, map[string]interface{}{
-		"type":              "joined",
-		"peer_id":           p.ID,
-		"sfu_ip":            p.SfuIP,
-		"sfu_port":          p.SfuPort,
-		"ice_ufrag":         p.IceUfrag,
-		"ice_pwd":           p.IcePwd,
-		"dtls_fingerprint":  p.DtlsFingerprint,
+		"type":             "joined",
+		"peer_id":          p.ID,
+		"sfu_ip":           p.SfuIP,
+		"sfu_port":         p.SfuPort,
+		"ice_ufrag":        p.IceUfrag,
+		"ice_pwd":          p.IcePwd,
+		"dtls_fingerprint": p.DtlsFingerprint,
+		"existing_peers":   existingPeers,
 	})
 
 	// 通知房间内其他人
 	notify, _ := json.Marshal(map[string]string{
-		"type":    "peer-joined",
-		"peer_id": p.ID,
+		"type":     "peer-joined",
+		"peer_id":  p.ID,
+		"username": join.Username,
 	})
 	h.broadcastToRoom(join.RoomID, notify, client)
 

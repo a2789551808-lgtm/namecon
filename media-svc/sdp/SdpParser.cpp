@@ -14,6 +14,19 @@ static std::string extractAttr(const std::string& line, const std::string& key) 
     return "";
 }
 
+// parseOffer：解析浏览器发来的 SDP Offer
+// 做什么：逐行扫描 SDP，提取 ICE 用户名/密码（ice-ufrag/ice-pwd）、
+//         DTLS 指纹（fingerprint）、SSRC 列表（第一个记为音频、第二个记为视频）、
+//         以及音视频的 payload type 和编码（a=rtpmap，识别 opus 和 VP8）。
+//         解析成功后返回 true（以 ice-ufrag 和 fingerprint 非空为准）。
+// 参数含义：
+//   sdp - 浏览器发来的完整 SDP Offer 字符串
+// videoPT / audioPT 为什么存成 static：
+//   这两个变量保存的是协商出的音视频 payload type（如 VP8=96、opus=111）。
+//   Router::onRtpPacket 在收到首个 RTP 包时需要判断该 SSRC 是音频还是视频，
+//   但此时没有 Peer 实例可携带该信息，只能通过 RTP 头里的 payload type 与
+//   全局静态的 videoPT 比对来区分。设为 static 让所有 Peer 共享一份协商结果，
+//   避免每个 Peer 都重复解析或单独传递。
 bool SdpParser::parseOffer(const std::string& sdp) {
     std::istringstream stream(sdp);
     std::string line;

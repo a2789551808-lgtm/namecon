@@ -3,45 +3,81 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NameCon — 会议室</title>
+    <title>NameCon - 会议室</title>
     <link rel="stylesheet" href="css/style.css">
-    <style>
-        .video-grid { display: flex; gap: 10px; flex-wrap: wrap; }
-        video { width: 320px; height: 240px; background: #333; border-radius: 8px; }
-        .controls { margin-top: 10px; }
-        button { margin: 4px; padding: 8px 16px; }
-    </style>
+    <link rel="stylesheet" href="css/room.css">
 </head>
 <body>
-    <h2>NameCon 会议室</h2>
-    <div id="roomInfo"></div>
-    <div class="video-grid">
-        <div>
-            <video id="localVideo" autoplay muted playsinline></video>
-            <p>本地</p>
+    <div class="room-container">
+        <!-- 顶部信息栏 -->
+        <div class="top-bar">
+            <div class="room-info">
+                <span id="roomInfoText">房间: ---</span>
+            </div>
         </div>
-        <div>
-            <video id="remoteVideo" autoplay playsinline muted></video>
-            <p>远程</p>
+
+        <!-- 视频网格 -->
+        <div class="video-grid" id="videoGrid" data-count="0">
         </div>
-    </div>
-    <div class="controls">
-        <button id="joinBtn" onclick="startCall()">开始通话</button>
-        <button onclick="leaveRoom()">离开房间</button>
+
+        <!-- 底部控制栏 -->
+        <div class="control-bar">
+            <div class="ctrl-item">
+                <button class="ctrl-btn" id="micBtn" title="麦克风">🎤</button>
+                <span class="ctrl-label" id="micLabel">麦克风</span>
+            </div>
+            <div class="ctrl-item ctrl-slider-item">
+                <button class="ctrl-btn ctrl-icon" id="volIcon" title="音量">🔊</button>
+                <input type="range" class="volume-slider" id="micVolume" min="0" max="100" value="100" title="麦克风音量">
+                <span class="ctrl-label">音量</span>
+            </div>
+            <div class="ctrl-item">
+                <button class="ctrl-btn" id="camBtn" title="摄像头">📹</button>
+                <span class="ctrl-label" id="camLabel">摄像头</span>
+            </div>
+            <div class="ctrl-item">
+                <button class="ctrl-btn" id="recBtn" title="录制">⏺</button>
+                <span class="ctrl-label" id="recLabel">录制</span>
+            </div>
+            <div class="ctrl-item">
+                <button class="ctrl-btn" id="infoBtn" title="房间信息">ℹ</button>
+                <span class="ctrl-label">信息</span>
+            </div>
+            <div class="ctrl-item">
+                <button class="ctrl-btn danger" id="hangupBtn" title="挂断">📵</button>
+                <span class="ctrl-label">挂断</span>
+            </div>
+        </div>
+
+        <!-- 开始通话按钮（初始状态） -->
+        <div id="startOverlay" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:5;">
+            <button class="btn-primary" style="padding:16px 48px;font-size:16px;" onclick="startCall()">开始通话</button>
+        </div>
+
+        <!-- 房间信息弹窗 -->
+        <div class="modal-overlay" id="infoModal">
+            <div class="modal-card">
+                <h3>房间信息</h3>
+                <div class="room-id" id="modalRoomId">------</div>
+                <div class="participant-count" id="modalCount">参会人数: 1</div>
+                <button class="btn-copy" onclick="copyRoomId()">复制房间号</button>
+                <button class="btn-close" onclick="closeModal()">关闭</button>
+            </div>
+        </div>
     </div>
 
     <script src="js/api.js"></script>
     <script src="js/signaling.js"></script>
     <script src="js/webrtc.js"></script>
+    <script src="js/controls.js"></script>
+    <script src="js/ui.js"></script>
     <script>
         const roomId = localStorage.getItem('roomId');
         const username = localStorage.getItem('username') || '匿名';
-        document.getElementById('roomInfo').textContent =
-            `房间: ${roomId} | 用户: ${username}`;
+        document.getElementById('roomInfoText').textContent = `房间: ${roomId}`;
 
         function startCall() {
-            document.getElementById('joinBtn').disabled = true;
-            // 通过用户点击触发 WebSocket + getUserMedia，满足 Chrome autoplay 策略
+            document.getElementById('startOverlay').style.display = 'none';
             signaling.connect();
             signaling.ws.onopen = () => {
                 signaling.send('join', { room_id: roomId, username: username });
@@ -50,14 +86,31 @@
 
         signaling.on('joined', async (msg) => {
             console.log('Joined room, peer:', msg.peer_id);
-            // 用 SFU 参数初始化 WebRTC
-            await initWebRTC(msg);
+            UI.addLocalVideo();
+            await WebRTC.init(msg);
+            // 为房间内已有参与者创建远端视频块
+            if (msg.existing_peers) {
+                msg.existing_peers.forEach(p => {
+                    UI.addRemoteVideo(p.peer_id, p.username || '远端');
+                });
+            }
+        });
+
+        signaling.on('peer-joined', (msg) => {
+            console.log('Peer joined:', msg.peer_id);
+            // 创建远端视频块，ontrack 时会填充画面
+            UI.addRemoteVideo(msg.peer_id, msg.username || '远端');
+        });
+
+        signaling.on('peer-left', (msg) => {
+            console.log('Peer left:', msg.peer_id);
+            UI.removeVideo(msg.peer_id);
         });
 
         signaling.on('error', (msg) => {
             const errMsg = msg.message || 'unknown';
             if (errMsg.includes('not found')) {
-                alert('房间 ' + roomId + ' 不存在，请重新创建。\n（提示：服务重启后房间会清空）');
+                alert('房间 ' + roomId + ' 不存在，请重新创建。');
                 window.location.href = '/';
             } else {
                 alert('错误: ' + errMsg);
@@ -66,14 +119,12 @@
 
         function leaveRoom() {
             signaling.send('leave');
-            if (pc) { pc.close(); pc = null; }
-            if (localStream) { localStream.getTracks().forEach(t => t.stop()); }
+            WebRTC.cleanup();
             signaling.close();
             localStorage.clear();
             window.location.href = '/';
         }
 
-        // 关闭标签页时自动通知离开
         window.addEventListener('beforeunload', () => {
             signaling.send('leave');
         });

@@ -1,88 +1,166 @@
-// webrtc.js — RTCPeerConnection 管理
-let pc = null;
-let localStream = null;
-let remoteStream = null;
+// webrtc.js - RTCPeerConnection 管理（重构为对象封装）
+const WebRTC = {
+    pc: null,
+    localStream: null,
+    remoteStream: null,
+    audioContext: null,
+    gainNode: null,
+    mediaRecorder: null,
+    recChunks: [],
+    _remoteTrackCb: null,
 
-async function initWebRTC(sfuInfo) {
-    console.log('[WebRTC] Init SFU=' + sfuInfo.sfu_ip + ':' + sfuInfo.sfu_port);
-    pc = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-    });
+    async init(sfuInfo) {
+        console.log('[WebRTC] Init SFU=' + sfuInfo.sfu_ip + ':' + sfuInfo.sfu_port);
+        this.pc = new RTCPeerConnection({
+            iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+        });
 
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        document.getElementById('localVideo').srcObject = localStream;
-        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-    } catch (e) {
-        console.warn('[WebRTC] getUserMedia failed:', e.message);
-    }
+        // 获取摄像头麦克风
+        try {
+            const rawStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            // 通过 GainNode 处理音频（用于音量调节）
+            this.audioContext = new AudioContext();
+            const source = this.audioContext.createMediaStreamSource(rawStream);
+            this.gainNode = this.audioContext.createGain();
+            this.gainNode.gain.value = 1.0;
+            const dest = this.audioContext.createMediaStreamDestination();
+            source.connect(this.gainNode);
+            this.gainNode.connect(dest);
 
-    // 创建空的远程流，预先绑定到 video 元素
-    remoteStream = new MediaStream();
-    const rv = document.getElementById('remoteVideo');
-    rv.srcObject = remoteStream;
-    rv.muted = true;
+            // 组合：处理后的音频 + 原始视频
+            this.localStream = new MediaStream();
+            this.localStream.addTrack(dest.stream.getAudioTracks()[0]);
+            this.localStream.addTrack(rawStream.getVideoTracks()[0]);
+            this._rawVideoTrack = rawStream.getVideoTracks()[0];
 
-    pc.ontrack = (event) => {
-        console.log('[WebRTC] Track: ' + event.track.kind + ' id=' + event.track.id);
-        remoteStream.addTrack(event.track);
-        // 重新绑定 srcObject 触发 Chrome 重新渲染
-        rv.srcObject = remoteStream;
-        if (event.track.kind === 'video') {
-            rv.play().catch(e => console.warn('play:', e));
-            setTimeout(() => {
-                console.log('[WebRTC] Check: w=' + rv.videoWidth + ' h=' + rv.videoHeight + ' tracks=' + remoteStream.getTracks().length);
-            }, 2000);
+            // 显示本地画面
+            const localVideo = document.getElementById('localVideo');
+            if (localVideo) {
+                localVideo.srcObject = this.localStream;
+            }
+
+            // 加入 PeerConnection
+            this.localStream.getTracks().forEach(t => this.pc.addTrack(t, this.localStream));
+        } catch (e) {
+            console.warn('[WebRTC] getUserMedia failed:', e.message);
         }
-    };
 
-    pc.oniceconnectionstatechange = () => {
-        console.log('[WebRTC] ICE: ' + pc.iceConnectionState);
-    };
-    pc.onicegatheringstatechange = () => {
-        console.log('[WebRTC] ICE gathering: ' + pc.iceGatheringState);
-    };
-    pc.onicecandidate = (ev) => {
-        if (ev.candidate) {
-            console.log('[WebRTC] Local candidate: ' + ev.candidate.type + ' ' + ev.candidate.address);
+        // 远端 track
+        this.remoteStream = new MediaStream();
+        this.pc.ontrack = (event) => {
+            console.log('[WebRTC] Track: ' + event.track.kind + ' id=' + event.track.id);
+            this.remoteStream.addTrack(event.track);
+            this._bindRemoteStream();
+        };
+
+        this.pc.oniceconnectionstatechange = () => {
+            console.log('[WebRTC] ICE: ' + this.pc.iceConnectionState);
+        };
+
+        // 创建 Offer
+        const offer = await this.pc.createOffer();
+        await this.pc.setLocalDescription(offer);
+
+        if (offer.sdp && offer.sdp.includes('m=audio') && offer.sdp.includes('m=video')) {
+            console.log('[WebRTC] Sending offer (' + offer.sdp.length + ' bytes)');
+            signaling.send('offer', { sdp: offer.sdp });
         } else {
-            console.log('[WebRTC] ICE gathering complete');
+            console.warn('[WebRTC] Offer empty - no media tracks?');
         }
-    };
+    },
 
-    // 即使没有本地 track，也创建 offer（信令层仍需建立连接）
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+    async setAnswer(sdp) {
+        if (!this.pc) return;
+        try {
+            await this.pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
+            console.log('[WebRTC] Remote description set');
+        } catch (e) {
+            console.error('[WebRTC] setRemoteDescription failed:', e);
+        }
+    },
 
-    // 只有在有 media section 时才发 offer
-    if (offer.sdp && offer.sdp.includes('m=audio') && offer.sdp.includes('m=video')) {
-        console.log('[WebRTC] Sending offer (' + offer.sdp.length + ' bytes)');
-        signaling.send('offer', { sdp: offer.sdp });
-    } else {
-        console.warn('[WebRTC] Offer empty - no media tracks?');
+    toggleMic() {
+        const track = this.localStream.getAudioTracks()[0];
+        if (track) {
+            track.enabled = !track.enabled;
+            return track.enabled;
+        }
+        return false;
+    },
+
+    toggleCamera() {
+        const track = this.localStream.getVideoTracks()[0];
+        if (track) {
+            track.enabled = !track.enabled;
+            return track.enabled;
+        }
+        return false;
+    },
+
+    setMicVolume(value) {
+        if (this.gainNode) {
+            this.gainNode.gain.value = value / 100;
+        }
+    },
+
+    // 绑定远端流到 video 元素（带重试，等 UI 创建好远端块）
+    _bindRemoteStream() {
+        const rv = document.getElementById('remoteVideo');
+        if (rv) {
+            rv.srcObject = this.remoteStream;
+            rv.play().catch(e => console.warn('play:', e));
+            console.log('[WebRTC] Remote stream bound to video element');
+        } else {
+            console.log('[WebRTC] remoteVideo not found, retry in 500ms');
+            setTimeout(() => this._bindRemoteStream(), 500);
+        }
+    },
+
+    startRecording() {
+        if (!this.localStream) return false;
+        const mimeType = 'video/webm;codecs=vp8,opus';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+            console.warn('MediaRecorder not supported');
+            return false;
+        }
+        this.recChunks = [];
+        this.mediaRecorder = new MediaRecorder(this.localStream, { mimeType });
+        this.mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) this.recChunks.push(e.data);
+        };
+        this.mediaRecorder.start();
+        return true;
+    },
+
+    stopRecording() {
+        if (!this.mediaRecorder) return;
+        this.mediaRecorder.stop();
+        this.mediaRecorder.onstop = () => {
+            const blob = new Blob(this.recChunks, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const now = new Date();
+            const ts = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            a.href = url;
+            a.download = `namecon_${ts}.webm`;
+            a.click();
+            URL.revokeObjectURL(url);
+        };
+    },
+
+    onRemoteTrack(cb) {
+        this._remoteTrackCb = cb;
+    },
+
+    cleanup() {
+        if (this.pc) { this.pc.close(); this.pc = null; }
+        if (this.localStream) { this.localStream.getTracks().forEach(t => t.stop()); }
+        if (this.audioContext) { this.audioContext.close(); }
     }
-}
+};
 
+// 监听 Answer 消息
 signaling.on('answer', async (msg) => {
     console.log('[WebRTC] Got answer (' + msg.sdp.length + ' bytes)');
-    console.log('[WebRTC] signalingState before:', pc ? pc.signalingState : 'null');
-    if (pc) {
-        try {
-            await pc.setRemoteDescription(new RTCSessionDescription({
-                type: 'answer',
-                sdp: msg.sdp
-            }));
-            console.log('[WebRTC] ✅ Remote description set, signalingState=' + pc.signalingState);
-        } catch (e) {
-            console.error('[WebRTC] ❌ setRemoteDescription failed:', e);
-        }
-    }
-});
-
-signaling.on('peer-joined', (msg) => {
-    console.log('Peer joined:', msg.peer_id);
-});
-
-signaling.on('peer-left', (msg) => {
-    console.log('Peer left:', msg.peer_id);
+    await WebRTC.setAnswer(msg.sdp);
 });

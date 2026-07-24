@@ -14,11 +14,12 @@ const (
 
 // Client 单个 WebSocket 连接
 type Client struct {
-	hub    *Hub
-	conn   *websocket.Conn
-	send   chan []byte
-	peerID string
-	roomID string
+	hub      *Hub
+	conn     *websocket.Conn
+	send     chan []byte
+	peerID   string
+	roomID   string
+	username string
 }
 
 // readPump 读循环

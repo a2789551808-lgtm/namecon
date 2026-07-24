@@ -1,0 +1,299 @@
+/* ===== 会议室全屏布局 ===== */
+.room-container {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+    background: #000;
+}
+
+/* ===== 顶部信息栏 ===== */
+.top-bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    z-index: 10;
+    padding: 12px 20px;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.top-bar .room-info {
+    color: var(--text-primary);
+    font-size: 14px;
+    background: rgba(0,0,0,0.4);
+    padding: 6px 14px;
+    border-radius: 20px;
+    backdrop-filter: blur(8px);
+}
+
+.top-bar .room-info span {
+    color: var(--text-secondary);
+    margin: 0 8px;
+}
+
+/* ===== 视频网格 ===== */
+.video-grid {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    gap: 10px;
+    padding: 60px 20px 100px 20px;
+    align-content: center;
+    justify-content: center;
+}
+
+/* 1人：单个居中 */
+.video-grid[data-count="1"] {
+    grid-template: 1fr / 1fr;
+}
+
+/* 2人：左右 */
+.video-grid[data-count="2"] {
+    grid-template: 1fr / 1fr 1fr;
+}
+
+/* 3人：品字型 */
+.video-grid[data-count="3"] {
+    grid-template-areas:
+        "a a"
+        "b c";
+    grid-template-rows: 1fr 1fr;
+    grid-template-columns: 1fr 1fr;
+}
+.video-grid[data-count="3"] > :nth-child(1) { grid-area: a; }
+.video-grid[data-count="3"] > :nth-child(2) { grid-area: b; }
+.video-grid[data-count="3"] > :nth-child(3) { grid-area: c; }
+
+/* 4人：田字格 */
+.video-grid[data-count="4"] {
+    grid-template: 1fr 1fr / 1fr 1fr;
+}
+
+/* 5-6人：2x3 */
+.video-grid[data-count="5"],
+.video-grid[data-count="6"] {
+    grid-template: repeat(2, 1fr) / repeat(3, 1fr);
+}
+
+/* 7-9人：3x3 */
+.video-grid[data-count="7"],
+.video-grid[data-count="8"],
+.video-grid[data-count="9"] {
+    grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+}
+
+/* ===== 单个视频块（固定大小正方形） ===== */
+.video-tile {
+    position: relative;
+    background: #1a1a1a;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    width: 300px;
+    height: 300px;
+    max-width: 90%;
+    max-height: 80vh;
+    align-self: center;
+    justify-self: center;
+}
+
+.video-tile video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.video-tile .label {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    padding: 8px 12px;
+    background: linear-gradient(to top, rgba(0,0,0,0.7), transparent);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.video-tile.muted::after {
+    content: "🔇";
+    position: absolute;
+    top: 8px; right: 8px;
+    font-size: 14px;
+}
+
+/* ===== 底部控制栏 ===== */
+.control-bar {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: flex;
+    align-items: flex-end;
+    gap: 20px;
+    padding: 12px 24px;
+    background: rgba(28, 33, 40, 0.9);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    backdrop-filter: blur(12px);
+}
+
+/* 每个控制项：按钮 + 文字标签垂直排列 */
+.ctrl-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+/* 音量项：图标 + 滑块水平排列，下面文字 */
+.ctrl-slider-item {
+    gap: 2px;
+}
+
+.ctrl-slider-item .ctrl-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 15px;
+}
+
+.ctrl-label {
+    font-size: 11px;
+    color: var(--text-secondary);
+    user-select: none;
+}
+
+.ctrl-btn {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: none;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.ctrl-btn:hover {
+    background: var(--border);
+}
+
+.ctrl-btn.active {
+    background: var(--accent);
+}
+
+.ctrl-btn.danger {
+    background: var(--danger);
+}
+
+.ctrl-btn.danger:hover {
+    background: var(--danger-hover);
+}
+
+.ctrl-btn.recording {
+    background: var(--danger);
+    animation: pulse 1.5s infinite;
+}
+
+.ctrl-btn.ctrl-icon {
+    cursor: default;
+}
+
+.ctrl-btn.ctrl-icon:hover {
+    background: var(--bg-tertiary);
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* 音量滑块 */
+.volume-slider {
+    width: 80px;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+    outline: none;
+    margin-bottom: 6px;
+}
+
+.volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+}
+
+/* ===== 房间信息弹窗 ===== */
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 100;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-overlay.show {
+    display: flex;
+}
+
+.modal-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 32px;
+    width: 360px;
+    text-align: center;
+}
+
+.modal-card h3 {
+    margin-bottom: 20px;
+    font-size: 1.1rem;
+}
+
+.modal-card .room-id {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 3px;
+    margin: 16px 0;
+}
+
+.modal-card .participant-count {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-bottom: 20px;
+}
+
+.modal-card .btn-copy {
+    padding: 8px 20px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.modal-card .btn-close {
+    margin-left: 8px;
+    padding: 8px 20px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 14px;
+}
