@@ -1,11 +1,12 @@
 #pragma once
 #include "RouteTable.h"
 #include <memory>
+#include <shared_mutex>
 
 struct Peer;
 class UdpServer;
 
-// SFU 路由核心 — 只看两样：SSRC→Peer（RouteTable），Peer→转发目标（forwardTo）
+// SFU 路由核心 - 只看两样：SSRC->Peer（RouteTable），Peer->转发目标（forwardTo）
 // 房间管理、Peer 增删等业务逻辑由 Go 信令侧负责
 class Router {
 public:
@@ -20,10 +21,14 @@ public:
     void removePeer(Peer* peer);
 
     // === RTP 转发 ===
-    // PacketRouter 解密后调用 — 明文 RTP 包，来自 fromPeer
+    // PacketRouter 解密后调用 - 明文 RTP 包，来自 fromPeer
     void onRtpPacket(const uint8_t* plainRtp, size_t len, Peer* fromPeer);
+
+    // 通过 SSRC 查找发送方 Peer（PacketRouter 转发 PLI 时用）
+    Peer* findPeerBySsrc(uint32_t ssrc);
 
 private:
     std::shared_ptr<UdpServer>  _udp;
     std::shared_ptr<RouteTable> _table;
+    mutable std::shared_mutex _mutex;  // 保护 forwardTo 的读写
 };

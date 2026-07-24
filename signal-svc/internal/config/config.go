@@ -17,6 +17,8 @@ type Config struct {
 type ServerConfig struct {
 	HTTPPort int
 	WSPort   int
+	CertFile string
+	KeyFile  string
 }
 
 type JWTConfig struct {
@@ -71,6 +73,10 @@ func Load(path string) (*Config, error) {
 				cfg.Server.HTTPPort, _ = strconv.Atoi(val)
 			case "ws_port":
 				cfg.Server.WSPort, _ = strconv.Atoi(val)
+			case "cert_file":
+				cfg.Server.CertFile = val
+			case "key_file":
+				cfg.Server.KeyFile = val
 			}
 		case "jwt":
 			switch key {

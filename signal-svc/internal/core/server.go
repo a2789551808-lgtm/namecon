@@ -61,10 +61,16 @@ func New(configPath string) (*Server, error) {
 	}, nil
 }
 
-// Run 启动 HTTP 服务（阻塞）
+// Run 启动 HTTP/HTTPS 服务（阻塞）
 func (s *Server) Run() error {
 	addr := fmt.Sprintf(":%d", s.cfg.Server.HTTPPort)
-	fmt.Printf("NameCon signal-svc starting on %s\n", addr)
+
+	if s.cfg.Server.CertFile != "" && s.cfg.Server.KeyFile != "" {
+		fmt.Printf("NameCon signal-svc starting (HTTPS) on %s\n", addr)
+		return http.ListenAndServeTLS(addr, s.cfg.Server.CertFile, s.cfg.Server.KeyFile, s.router)
+	}
+
+	fmt.Printf("NameCon signal-svc starting (HTTP) on %s\n", addr)
 	return http.ListenAndServe(addr, s.router)
 }
 

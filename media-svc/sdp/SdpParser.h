@@ -1,7 +1,8 @@
 #pragma once
 #include <string>
+#include <cstdint>
 
-// SDP 会话描述 — Offer 解析 + Answer 生成
+// SDP 会话描述 - Offer 解析 + Answer 生成
 class SdpParser {
 public:
     bool parseOffer(const std::string& sdp);
@@ -13,13 +14,17 @@ public:
 
     std::string generateAnswer(const std::string& offerSdp);
 
+    // 全局：解析出的视频/音频 PT（Router 用它判断 RTP 包是音频还是视频）
+    static uint8_t videoPT;
+    static uint8_t audioPT;
+
 private:
     // 从浏览器 offer 解析到的
     std::string _iceUfrag;
     std::string _icePwd;
     std::string _fingerprint;
-    std::string _audioPayloadType;   // 只保留认识的第一个音频 PT
-    std::string _videoPayloadType;   // 只保留认识的第一个视频 PT
+    std::string _audioPayloadType;
+    std::string _videoPayloadType;
     std::string _audioSsrc;
     std::string _videoSsrc;
 

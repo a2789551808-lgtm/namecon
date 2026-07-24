@@ -1,12 +1,17 @@
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 ENV GOPROXY=https://goproxy.cn,direct
 ENV GOTOOLCHAIN=auto
 WORKDIR /app
 COPY signal-svc/ .
 RUN go build -o signal-svc .
 FROM alpine:3.20
+RUN apk add --no-cache ca-certificates openssl
 COPY --from=builder /app/signal-svc /usr/local/bin/
 COPY configs/signal-svc.ini /etc/namecon/
 COPY web/ /app/web/
 WORKDIR /app
+# 生成自签证书
+RUN openssl req -x509 -newkey rsa:2048 -keyout /etc/namecon/key.pem \
+    -out /etc/namecon/cert.pem -days 365 -nodes \
+    -subj "/CN=*" -addext "subjectAltName=IP:111.229.198.145"
 CMD ["signal-svc", "/etc/namecon/signal-svc.ini"]

@@ -123,6 +123,7 @@ add_executable(test_forward
     sfu/Router.cpp
     sfu/Peer.cpp
     sfu/RouteTable.cpp
+    sdp/SdpParser.cpp
     transport/UdpServer.cpp
     transport/SrtpContext.cpp
     rtp/RtpHeader.cpp

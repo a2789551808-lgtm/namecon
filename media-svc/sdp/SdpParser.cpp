@@ -2,6 +2,10 @@
 #include <sstream>
 #include <iostream>
 
+// 全局静态成员初始化
+uint8_t SdpParser::videoPT = 96;  // 默认 VP8 PT=96
+uint8_t SdpParser::audioPT = 111; // 默认 opus PT=111
+
 static std::string extractAttr(const std::string& line, const std::string& key) {
     std::string prefix = "a=" + key + ":";
     if (line.compare(0, prefix.size(), prefix) == 0) {
@@ -39,7 +43,7 @@ bool SdpParser::parseOffer(const std::string& sdp) {
             continue;
         }
 
-    val = extractAttr(line, "rtpmap");
+        val = extractAttr(line, "rtpmap");
         if (!val.empty()) {
             size_t space = val.find(' ');
             std::string pt    = (space != std::string::npos) ? val.substr(0, space) : val;
@@ -47,9 +51,11 @@ bool SdpParser::parseOffer(const std::string& sdp) {
             if ((codec.find("opus") != std::string::npos || codec.find("Opus") != std::string::npos)
                 && _audioPayloadType.empty()) {
                 _audioPayloadType = pt;
+                audioPT = static_cast<uint8_t>(std::stoi(pt));
             } else if ((codec.find("VP8") != std::string::npos || codec.find("vp8") != std::string::npos)
                     && _videoPayloadType.empty()) {
                 _videoPayloadType = pt;
+                videoPT = static_cast<uint8_t>(std::stoi(pt));
             }
             continue;
         }
@@ -70,7 +76,6 @@ void SdpParser::setServerInfo(const std::string& ip, int port,
 std::string SdpParser::generateAnswer(const std::string& offerSdp) {
     if (!parseOffer(offerSdp)) return "";
 
-    // 使用 SFU 真实凭据（由 setServerInfo 注入）
     std::string srvIp   = _serverIp.empty()   ? "127.0.0.1" : _serverIp;
     int         srvPort = _serverPort > 0     ? _serverPort  : 10000;
     std::string srvUf   = _serverUfrag.empty()? "sfu_default" : _serverUfrag;
@@ -84,8 +89,6 @@ std::string SdpParser::generateAnswer(const std::string& offerSdp) {
     answer << "t=0 0\r\n";
     answer << "a=group:BUNDLE 0 1\r\n";
     answer << "a=msid-semantic: WMS\r\n";
-
-    // ICE-lite: SFU 仅响应，不主动发 STUN
     answer << "a=ice-lite\r\n";
 
     // 音频

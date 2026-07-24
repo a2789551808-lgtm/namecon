@@ -97,6 +97,11 @@ void MediaServer::setupSignals() {
 void MediaServer::run() {
     std::cout << "NameCon media-svc starting..." << std::endl;
 
+    // gRPC server 在独立线程阻塞等待
+    std::thread grpcThread([this] {
+        _grpcServer->run();
+    });
+
     constexpr unsigned int kThreadCount = 5;
     std::vector<std::thread> threads;
     for (unsigned int i = 0; i < kThreadCount; ++i) {
@@ -106,6 +111,7 @@ void MediaServer::run() {
               << " threads" << std::endl;
 
     for (auto& t : threads) t.join();
+    grpcThread.join();
 }
 
 void MediaServer::stop() {

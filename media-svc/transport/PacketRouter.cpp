@@ -69,8 +69,6 @@ void PacketRouter::onPacket(const uint8_t* data, size_t len,
 
     // 先检查 STUN magic cookie（最可靠）
     if (len >= 20 && data[0] == 0x00 && data[1] <= 0x03) {
-        // 前2bit=00 且 type 在 STUN 范围 (0x0000-0x03FF)
-        // 再检查 magic cookie
         uint32_t cookie;
         memcpy(&cookie, data + 4, 4);
         cookie = ntohl(cookie);
@@ -88,7 +86,7 @@ void PacketRouter::onPacket(const uint8_t* data, size_t len,
 }
 
 // ==============================
-// STUN → IceServer
+// STUN -> IceServer
 // ==============================
 void PacketRouter::handleStun(const uint8_t* data, size_t len,
                               const boost::asio::ip::udp::endpoint& ep) {
@@ -96,9 +94,9 @@ void PacketRouter::handleStun(const uint8_t* data, size_t len,
 }
 
 // ==============================
-// DTLS → Peer::dtls
-//   首次看到新 endpoint → 创建 Peer + DtlsContext
-//   握手完成 → 创建 SrtpContext
+// DTLS -> Peer::dtls
+//   首次看到新 endpoint -> 创建 Peer + DtlsContext
+//   握手完成 -> 创建 SrtpContext
 // ==============================
 void PacketRouter::handleDtls(const uint8_t* data, size_t len,
                               const boost::asio::ip::udp::endpoint& ep) {
@@ -117,26 +115,63 @@ void PacketRouter::handleDtls(const uint8_t* data, size_t len,
     bool wasDone = peer->dtls->isHandshakeDone();
     peer->dtls->handlePacket(data, len);
 
-    // 握手刚刚完成 → 创建 SRTP
+    // 握手刚刚完成 -> 创建 SRTP
     if (!wasDone && peer->dtls->isHandshakeDone()) {
         auto srtp = std::make_shared<SrtpContext>();
         std::string keys = peer->dtls->exportSrtpKeys();
         if (!keys.empty() && srtp->init(keys)) {
             peer->srtp = srtp;
             std::cout << "==============================================" << std::endl;
-            std::cout << "[PacketRouter] ✅ SRTP READY for " << peer->peerId
+            std::cout << "[PacketRouter] SRTP READY for " << peer->peerId
                       << " @ " << ep.address().to_string() << ":" << ep.port()
                       << std::endl;
             std::cout << "==============================================" << std::endl;
+
+            // 向所有已有 SRTP 的 Peer 发送 PLI，请求关键帧
+            // 新 Peer 加入后需要关键帧才能解码视频
+            sendPLItoAllPeers(peer.get());
         } else {
-            std::cerr << "[PacketRouter] ❌ SRTP init FAILED for "
+            std::cerr << "[PacketRouter] SRTP init FAILED for "
                       << ep.address().to_string() << ":" << ep.port() << std::endl;
         }
     }
 }
 
 // ==============================
-// SRTP → Peer::srtp 解密 → RTP/RTCP 分发
+// 向所有已有 SRTP 的 Peer 发送 PLI（请求关键帧）
+// 新 Peer 加入时调用，mediaSSRC 设为发送方的视频 SSRC
+// ==============================
+void PacketRouter::sendPLItoAllPeers(Peer* newPeer) {
+    std::lock_guard<std::mutex> lock(_peerMutex);
+    for (auto& [ep, peer] : _peerMap) {
+        if (peer.get() == newPeer) continue;
+        if (!peer->srtp) continue;
+        if (peer->videoSsrc == 0) continue;  // 还没收到过这个 Peer 的视频流
+
+        // PLI 包结构 (12 字节, RFC 4585)
+        uint8_t pli[12];
+        pli[0] = 0x81;  // V=2, P=0, FMT=1
+        pli[1] = 206;   // PT=PSFB
+        uint16_t pliLen = htons(2);
+        memcpy(pli + 2, &pliLen, 2);
+        uint32_t senderSsrc = 0;  // SFU SSRC = 0
+        memcpy(pli + 4, &senderSsrc, 4);
+        uint32_t mediaSsrc = htonl(peer->videoSsrc);  // 发送方的视频 SSRC
+        memcpy(pli + 8, &mediaSsrc, 4);
+
+        uint8_t out[64];
+        memcpy(out, pli, 12);
+        int outLen = 12;
+        if (peer->srtp->protectRtcp(out, &outLen)) {
+            _udp->sendTo(out, static_cast<size_t>(outLen), peer->remoteEp);
+            std::cout << "[PacketRouter] Sent PLI to " << peer->peerId
+                      << " (videoSsrc=" << peer->videoSsrc << ")" << std::endl;
+        }
+    }
+}
+
+// ==============================
+// SRTP -> Peer::srtp 解密 -> RTP/RTCP 分发
 // ==============================
 void PacketRouter::handleSrtp(const uint8_t* data, size_t len,
                               const boost::asio::ip::udp::endpoint& ep) {
@@ -151,16 +186,69 @@ void PacketRouter::handleSrtp(const uint8_t* data, size_t len,
     memcpy(buf, data, len);
     int bufLen = static_cast<int>(len);
 
-    if (!peer->srtp->unprotect(buf, &bufLen)) return;
-
-    // 区分 RTP / RTCP
-    if (bufLen >= 2) {
-        uint8_t pt = buf[1];
-        if (pt >= 200 && pt <= 223 && _rtcp) {
-            _rtcp->onRtcpPacket(buf, static_cast<size_t>(bufLen));
-        } else if (_router) {
-            // ✅ 明文 RTP → Router 转发
+    // 先试 RTP 解密，失败则试 RTCP 解密（rtcp-mux 下 RTP/RTCP 共用端口）
+    if (peer->srtp->unprotect(buf, &bufLen)) {
+        // RTP 包 -> 转发
+        if (_router) {
             _router->onRtpPacket(buf, static_cast<size_t>(bufLen), peer.get());
+        }
+    } else {
+        // 可能是 RTCP，重新尝试
+        memcpy(buf, data, len);
+        bufLen = static_cast<int>(len);
+        if (peer->srtp->unprotectRtcp(buf, &bufLen)) {
+            if (_rtcp) {
+                _rtcp->onRtcpPacket(buf, static_cast<size_t>(bufLen));
+            }
+            // 转发 PLI 给发送方：检查是否是 PLI 包
+            // PLI: byte[0] & 0x1F = 1 (FMT), byte[1] = 206 (PT=PSFB)
+            if (bufLen >= 12 && (buf[0] & 0x1F) == 1 && buf[1] == 206) {
+                uint32_t mediaSsrc;
+                memcpy(&mediaSsrc, buf + 8, 4);
+                mediaSsrc = ntohl(mediaSsrc);
+                // 找到这个 SSRC 对应的发送方，把 PLI 转发给他
+                forwardPLI(mediaSsrc, peer.get());
+            }
+        }
+    }
+}
+
+// ==============================
+// 转发浏览器发的 PLI 给发送方
+// 通过 mediaSSRC 查 RouteTable 精确找到发送方，只发给那一个人
+// ==============================
+void PacketRouter::forwardPLI(uint32_t mediaSsrc, Peer* receiver) {
+    if (!_router) return;
+
+    // 通过 SSRC 查找发送方 Peer
+    Peer* sender = _router->findPeerBySsrc(mediaSsrc);
+    if (!sender) {
+        std::cerr << "[PacketRouter] PLI: sender not found for SSRC=" << mediaSsrc << std::endl;
+        return;
+    }
+    if (!sender->srtp) return;
+
+    // 构造 PLI 包
+    uint8_t pli[12];
+    pli[0] = 0x81;  // V=2, P=0, FMT=1
+    pli[1] = 206;   // PT=PSFB
+    uint16_t pliLen = htons(2);
+    memcpy(pli + 2, &pliLen, 2);
+    uint32_t senderSsrc = 0;  // SFU SSRC = 0
+    memcpy(pli + 4, &senderSsrc, 4);
+    uint32_t netSsrc = htonl(mediaSsrc);
+    memcpy(pli + 8, &netSsrc, 4);
+
+    // 只发给发送方
+    uint8_t out[64];
+    memcpy(out, pli, 12);
+    int outLen = 12;
+    if (sender->srtp->protectRtcp(out, &outLen)) {
+        _udp->sendTo(out, static_cast<size_t>(outLen), sender->remoteEp);
+        static int pliCount = 0;
+        if (++pliCount <= 10) {
+            std::cout << "[PacketRouter] Forwarded PLI to " << sender->peerId
+                      << " (mediaSsrc=" << mediaSsrc << ")" << std::endl;
         }
     }
 }

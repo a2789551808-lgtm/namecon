@@ -138,7 +138,7 @@ bool IceServer::validateCredentials(const uint8_t* data, size_t len,
     size_t miAttrStart = miPos - data;  // MI 属性起始偏移
     size_t hmacInputLen = miAttrStart;  // HMAC 输入 = MI 之前的所有内容
 
-    static uint8_t buf[4096];
+    uint8_t buf[4096];  // 栈上分配，线程安全
     if (hmacInputLen > sizeof(buf)) return false;
     memcpy(buf, data, hmacInputLen);
 
