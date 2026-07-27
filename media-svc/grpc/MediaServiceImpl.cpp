@@ -10,6 +10,7 @@
 #include <random>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 
 // 获取 SFU 的公网 IP：环境变量 > 配置文件 > 默认 127.0.0.1
 static std::string getPublicIp() {
@@ -83,6 +84,8 @@ grpc::Status MediaServiceImpl::AddPeer(
 
 // ============================================================
 // SendOffer — 解析浏览器 SDP Offer，生成 SFU Answer（使用真实凭据）
+//   处理 recv_mids：把订阅者声明的 mid 绑到 Router 的 Consumer，
+//   收集 mid → 出口 SSRC，传给 SdpParser 在 answer 里写 a=ssrc
 // ============================================================
 grpc::Status MediaServiceImpl::SendOffer(
     grpc::ServerContext* /*ctx*/,
@@ -101,6 +104,21 @@ grpc::Status MediaServiceImpl::SendOffer(
         );
     }
 
+    // 把 recv_mids 绑到 Router 的 Consumer，收集 mid → 出口 SSRC
+    std::map<std::string, uint32_t> midToSsrc;
+    auto subscriber = findPeer(req->peer_id());
+    if (subscriber && _router) {
+        for (const auto& rm : req->recv_mids()) {
+            uint32_t ssrc = _router->bindConsumerByMid(
+                subscriber.get(), rm.publisher_peer_id(),
+                rm.is_video(), rm.mid());
+            if (ssrc != 0) {
+                midToSsrc[rm.mid()] = ssrc;
+            }
+        }
+    }
+    parser.setMidSsrcMap(midToSsrc);
+
     std::string answer = parser.generateAnswer(req->sdp());
     if (answer.empty()) {
         // SDP 解析失败（如无 media track），返回空 answer 而不报错
@@ -110,30 +128,46 @@ grpc::Status MediaServiceImpl::SendOffer(
     }
     resp->set_answer_sdp(answer);
     std::cout << "[gRPC] SendOffer: " << req->peer_id()
-              << " → answer " << answer.size() << " bytes" << std::endl;
+              << " → answer " << answer.size() << " bytes"
+              << " (recv_mids=" << req->recv_mids_size() << ")" << std::endl;
     return grpc::Status::OK;
 }
 
 // ============================================================
-// AddForwarding — Go 告诉 C++: fromPeer 的流转发给 toPeer
+// AddConsumer — Go 告诉 C++: subscriber 要订阅 publisher 的某路流
+// 返回 SFU 分配的出口 SSRC（写入 subscriber 的 SDP answer 的 a=ssrc）
 // ============================================================
-grpc::Status MediaServiceImpl::AddForwarding(
+grpc::Status MediaServiceImpl::AddConsumer(
     grpc::ServerContext* /*ctx*/,
-    const media::AddForwardingReq* req,
-    media::AddForwardingResp* resp)
+    const media::AddConsumerReq* req,
+    media::AddConsumerResp* resp)
 {
-    auto from = findPeer(req->from_peer_id());
-    auto to   = findPeer(req->to_peer_id());
+    auto subscriber = findPeer(req->subscriber_peer_id());
+    auto publisher  = findPeer(req->publisher_peer_id());
 
-    if (!from || !to) {
-        resp->set_success(false);
+    if (!subscriber || !publisher) {
         return grpc::Status(grpc::StatusCode::NOT_FOUND,
-                            "Peer not registered yet (wait for DTLS)");
+                            "Peer not registered yet (wait for AddPeer)");
     }
 
+    uint32_t ssrc = 0;
     if (_router) {
-        _router->addForwarding(from.get(), to.get());
+        ssrc = _router->addConsumer(subscriber.get(), publisher.get(), req->is_video());
     }
+    resp->set_rewritten_ssrc(ssrc);
+    return grpc::Status::OK;
+}
+
+// ============================================================
+// RemoveConsumer — subscriber 取消订阅 publisher 的某路流
+// 简化实现：当前不维护单个 Consumer 的 gRPC 句柄，移除依赖 Peer 离开时的 removePeer 批量清理
+// 这里返回 success=true 占位，真实清理在 RemovePeer 时发生
+// ============================================================
+grpc::Status MediaServiceImpl::RemoveConsumer(
+    grpc::ServerContext* /*ctx*/,
+    const media::RemoveConsumerReq* /*req*/,
+    media::RemoveConsumerResp* resp)
+{
     resp->set_success(true);
     return grpc::Status::OK;
 }

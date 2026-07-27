@@ -32,8 +32,12 @@ public:
     grpc::Status SendOffer(grpc::ServerContext*,
         const media::SendOfferReq*, media::SendOfferResp*) override;
 
-    grpc::Status AddForwarding(grpc::ServerContext*,
-        const media::AddForwardingReq*, media::AddForwardingResp*) override;
+    // === Consumer 模型 RPC ===
+    grpc::Status AddConsumer(grpc::ServerContext*,
+        const media::AddConsumerReq*, media::AddConsumerResp*) override;
+
+    grpc::Status RemoveConsumer(grpc::ServerContext*,
+        const media::RemoveConsumerReq*, media::RemoveConsumerResp*) override;
 
     grpc::Status RemovePeer(grpc::ServerContext*,
         const media::RemovePeerReq*, media::RemovePeerResp*) override;
