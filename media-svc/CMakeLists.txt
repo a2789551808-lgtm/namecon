@@ -138,3 +138,12 @@ target_link_libraries(test_forward
     OpenSSL::Crypto
     ${SRTP2_LIBRARIES}
 )
+
+# === RtpHeader 单元测试 ===
+add_executable(test_rtp_header
+    rtp/test_rtp_header.cpp
+    rtp/RtpHeader.cpp
+)
+target_include_directories(test_rtp_header PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)

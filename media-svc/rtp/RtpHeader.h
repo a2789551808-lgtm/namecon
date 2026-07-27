@@ -19,4 +19,7 @@ struct RtpHeader {
     static bool parse(const uint8_t* data, size_t len, RtpHeader& out);
     // 获取 RTP 头总长度（含 CSRC 和 extension）
     static size_t headerLength(const uint8_t* data, size_t len);
+    // 把字段写回 buffer 前 12 字节固定头（不含 CSRC / extension / payload）
+    // SFU 改写 SSRC/seq/timestamp 后调用，用 htons/htonl 保证大端
+    static void writeFixedHeader(uint8_t* data, size_t len, const RtpHeader& hdr);
 };

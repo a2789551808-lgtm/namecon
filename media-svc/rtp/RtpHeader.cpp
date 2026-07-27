@@ -61,3 +61,23 @@ size_t RtpHeader::headerLength(const uint8_t* data, size_t len) {
 
     return length;
 }
+
+void RtpHeader::writeFixedHeader(uint8_t* data, size_t len, const RtpHeader& hdr) {
+    if (len < 12) return;
+
+    uint8_t byte0 = ((hdr.version & 0x03) << 6)
+                  | ((hdr.padding ? 1 : 0) << 5)
+                  | ((hdr.extension ? 1 : 0) << 4)
+                  | (hdr.csrcCount & 0x0F);
+    uint8_t byte1 = ((hdr.marker ? 1 : 0) << 7) | (hdr.payloadType & 0x7F);
+
+    uint16_t seq = htons(hdr.sequenceNumber);
+    uint32_t ts  = htonl(hdr.timestamp);
+    uint32_t sss = htonl(hdr.ssrc);
+
+    memcpy(data,     &byte0, 1);
+    memcpy(data + 1, &byte1, 1);
+    memcpy(data + 2, &seq,   2);
+    memcpy(data + 4, &ts,    4);
+    memcpy(data + 8, &sss,   4);
+}
