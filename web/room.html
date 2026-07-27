@@ -88,18 +88,25 @@
             console.log('Joined room, peer:', msg.peer_id);
             UI.addLocalVideo();
             await WebRTC.init(msg);
-            // 为房间内已有参与者创建远端视频块
-            if (msg.existing_peers) {
+            // 为已有参与者添加 recvonly transceiver
+            if (msg.existing_peers && msg.existing_peers.length > 0) {
                 msg.existing_peers.forEach(p => {
                     UI.addRemoteVideo(p.peer_id, p.username || '远端');
+                    WebRTC.addRecvTransceiver();
                 });
+                await WebRTC.renegotiate();
             }
         });
 
-        signaling.on('peer-joined', (msg) => {
-            console.log('Peer joined:', msg.peer_id);
-            // 创建远端视频块，ontrack 时会填充画面
+        signaling.on('renegotiate', async (msg) => {
+            console.log('[WS] renegotiate:', msg.action, msg.peer_id);
+            if (msg.action === 'leave') {
+                UI.removeVideo(msg.peer_id);
+                return;
+            }
             UI.addRemoteVideo(msg.peer_id, msg.username || '远端');
+            WebRTC.addRecvTransceiver();
+            await WebRTC.renegotiate();
         });
 
         signaling.on('peer-left', (msg) => {

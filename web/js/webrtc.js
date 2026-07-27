@@ -45,12 +45,19 @@ const WebRTC = {
             console.warn('[WebRTC] getUserMedia failed:', e.message);
         }
 
-        // 远端 track
-        this.remoteStream = new MediaStream();
+        // 远端 track - 多流模式
         this.pc.ontrack = (event) => {
-            console.log('[WebRTC] Track: ' + event.track.kind + ' id=' + event.track.id);
-            this.remoteStream.addTrack(event.track);
-            this._bindRemoteStream();
+            console.log('[WebRTC] Track: ' + event.track.kind + ' id=' + event.track.id + ' mid=' + event.transceiver.mid);
+            const stream = event.streams[0] || new MediaStream([event.track]);
+            const remoteTiles = document.querySelectorAll('.video-tile:not(#tile-local) video');
+            for (const tile of remoteTiles) {
+                if (!tile.srcObject) {
+                    tile.srcObject = stream;
+                    tile.play().catch(e => console.warn('play:', e));
+                    console.log('[WebRTC] Bound stream to video element (mid=' + event.transceiver.mid + ')');
+                    break;
+                }
+            }
         };
 
         this.pc.oniceconnectionstatechange = () => {
@@ -79,6 +86,23 @@ const WebRTC = {
         }
     },
 
+    // 为新参与者添加接收通道（video + audio recvonly）
+    addRecvTransceiver() {
+        if (!this.pc) return;
+        this.pc.addTransceiver('video', { direction: 'recvonly' });
+        this.pc.addTransceiver('audio', { direction: 'recvonly' });
+        console.log('[WebRTC] Added recvonly transceivers (video + audio)');
+    },
+
+    // 重协商：createOffer -> send
+    async renegotiate() {
+        if (!this.pc) return;
+        const offer = await this.pc.createOffer();
+        await this.pc.setLocalDescription(offer);
+        console.log('[WebRTC] Renegotiate offer (' + offer.sdp.length + ' bytes)');
+        signaling.send('offer', { sdp: offer.sdp });
+    },
+
     toggleMic() {
         const track = this.localStream.getAudioTracks()[0];
         if (track) {
@@ -100,19 +124,6 @@ const WebRTC = {
     setMicVolume(value) {
         if (this.gainNode) {
             this.gainNode.gain.value = value / 100;
-        }
-    },
-
-    // 绑定远端流到 video 元素（带重试，等 UI 创建好远端块）
-    _bindRemoteStream() {
-        const rv = document.getElementById('remoteVideo');
-        if (rv) {
-            rv.srcObject = this.remoteStream;
-            rv.play().catch(e => console.warn('play:', e));
-            console.log('[WebRTC] Remote stream bound to video element');
-        } else {
-            console.log('[WebRTC] remoteVideo not found, retry in 500ms');
-            setTimeout(() => this._bindRemoteStream(), 500);
         }
     },
 

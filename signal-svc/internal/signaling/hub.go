@@ -148,11 +148,12 @@ func (h *Hub) handleJoin(client *Client, msg Message) {
 		"existing_peers":   existingPeers,
 	})
 
-	// 通知房间内其他人
+	// 通知房间内其他人：需要重协商（新增 recvonly transceiver）
 	notify, _ := json.Marshal(map[string]string{
-		"type":     "peer-joined",
+		"type":     "renegotiate",
 		"peer_id":  p.ID,
 		"username": join.Username,
+		"action":   "join",
 	})
 	h.broadcastToRoom(join.RoomID, notify, client)
 
@@ -195,9 +196,13 @@ func (h *Hub) handleLeave(client *Client) {
 		if err := h.roomMgr.RemoveParticipant(client.roomID, client.peerID); err != nil {
 			log.Printf("[WS] RemoveParticipant error: %v", err)
 		}
-		h.broadcastToRoom(client.roomID,
-			[]byte(`{"type":"peer-left","peer_id":"`+client.peerID+`"}`),
-			client)
+		// 通知房间内其他人：有人离开，移除对应 video
+		leaveNotify, _ := json.Marshal(map[string]string{
+			"type":    "renegotiate",
+			"peer_id": client.peerID,
+			"action":  "leave",
+		})
+		h.broadcastToRoom(client.roomID, leaveNotify, nil)
 	}
 
 	h.mu.Lock()
