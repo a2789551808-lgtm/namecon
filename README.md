@@ -9,6 +9,8 @@
 
 从零实现的 WebRTC SFU 视频会议系统。Go 负责信令调度与房间管理，C++ 负责 ICE/DTLS/SRTP 与选择性转发（SFU），前端使用浏览器原生 WebRTC API。
 
+> **多人会议已支持**：Consumer 模型 + SSRC 改写 + Unified Plan，详见 [docs/2026-07-27-multi-user-sfu-refactor.md](docs/2026-07-27-multi-user-sfu-refactor.md)
+
 
 ## 快速开始
 
@@ -61,7 +63,7 @@ sudo systemctl restart docker
 | 服务 | 语言 | 端口 | 职责 |
 |------|------|------|------|
 | **signal-svc** | Go | :8080 | REST API、WebSocket 信令、房间管理、前端静态文件 |
-| **media-svc** | C++ | :50051 gRPC / UDP 10000 | ICE-lite、DTLS 握手、SRTP 加解密、SFU 路由转发 |
+| **media-svc** | C++ | :50051 gRPC / UDP 10000 | ICE-lite、DTLS 握手、SRTP 加解密、SFU 路由转发（Consumer 模型 + SSRC 改写 + RTCP Terminator） |
 | **web** | HTML/JS | — | 浏览器原生 WebRTC，Go 直接托管 |
 
 ---
@@ -85,11 +87,11 @@ namecon/
 ├── web/                      # 前端 (原生 HTML/JS)
 ├── signal-svc/               # Go 信令服务
 └── media-svc/                # C++ 媒体引擎
-    ├── transport/            #   UDP、ICE、DTLS、SRTP
-    ├── sfu/                  #   Router、RouteTable、Peer
-    ├── sdp/                  #   SDP 解析与生成
-    ├── rtcp/                 #   RTCP 解析与构造
-    ├── rtp/                  #   RTP 头解析
+    ├── transport/            #   UDP、ICE、DTLS、SRTP、PacketRouter
+    ├── sfu/                  #   Router、RouteTable、Peer、Consumer、Producer
+    ├── sdp/                  #   SDP 解析与生成（Unified Plan 多 m=）
+    ├── rtcp/                 #   RTCP 解析（翻译在 Router）
+    ├── rtp/                  #   RTP 头解析 + writeFixedHeader
     ├── grpc/                 #   gRPC 服务实现
     └── core/                 #   启动、配置
 ```
