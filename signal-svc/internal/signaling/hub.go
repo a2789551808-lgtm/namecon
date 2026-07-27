@@ -157,8 +157,10 @@ func (h *Hub) handleJoin(client *Client, msg Message) {
 	})
 	h.broadcastToRoom(join.RoomID, notify, client)
 
-	// 设置转发
-	h.roomMgr.SetupForwarding(join.RoomID)
+	// 为房间内每对参会者建立双向 Consumer（B 收 A，A 收 B）
+	if err := h.roomMgr.SetupConsumers(join.RoomID); err != nil {
+		log.Printf("[WS] SetupConsumers error: %v", err)
+	}
 
 	log.Printf("[WS] %s joined room %s as %s", join.Username, join.RoomID, p.ID)
 }
@@ -166,12 +168,27 @@ func (h *Hub) handleJoin(client *Client, msg Message) {
 func (h *Hub) handleOffer(client *Client, msg Message) {
 	payload, _ := json.Marshal(msg.Payload)
 	var offer struct {
-		SDP string `json:"sdp"`
+		SDP      string `json:"sdp"`
+		RecvMids []struct {
+			Mid             string `json:"mid"`
+			PublisherPeerID string `json:"publisher_peer_id"`
+			IsVideo         bool   `json:"is_video"`
+		} `json:"recv_mids"`
 	}
 	json.Unmarshal(payload, &offer)
 
+	// 转 sfu.RecvMid
+	var recvMids []sfu.RecvMid
+	for _, rm := range offer.RecvMids {
+		recvMids = append(recvMids, sfu.RecvMid{
+			Mid:             rm.Mid,
+			PublisherPeerID: rm.PublisherPeerID,
+			IsVideo:         rm.IsVideo,
+		})
+	}
+
 	// 调 C++ 生成 answer
-	answerSDP, err := h.sfu.SendOffer(client.peerID, offer.SDP)
+	answerSDP, err := h.sfu.SendOffer(client.peerID, offer.SDP, recvMids)
 	if err != nil {
 		h.sendToClient(client, map[string]string{"type": "error", "message": fmt.Sprintf("SendOffer: %v", err)})
 		return
@@ -182,7 +199,8 @@ func (h *Hub) handleOffer(client *Client, msg Message) {
 		"sdp":  answerSDP,
 	})
 
-	log.Printf("[WS] Offer → Answer for %s (%d bytes)", client.peerID, len(answerSDP))
+	log.Printf("[WS] Offer → Answer for %s (%d bytes, %d recv_mids)",
+		client.peerID, len(answerSDP), len(recvMids))
 }
 
 func (h *Hub) handleLeave(client *Client) {

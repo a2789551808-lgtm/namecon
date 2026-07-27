@@ -106,8 +106,9 @@ func (m *Manager) RemoveParticipant(roomID, peerID string) error {
 	return m.sfu.RemovePeer(peerID)
 }
 
-// SetupForwarding 设置房间内所有参会者互相转发
-func (m *Manager) SetupForwarding(roomID string) error {
+// SetupConsumers 为房间内每对参会者建立双向 Consumer（每人收其他人的音视频）
+// 调用时机：新参与者加入后（AddPeer 完成、通知 renegotiate 之前）
+func (m *Manager) SetupConsumers(roomID string) error {
 	room, err := m.GetRoom(roomID)
 	if err != nil {
 		return err
@@ -121,14 +122,19 @@ func (m *Manager) SetupForwarding(roomID string) error {
 		peers = append(peers, p)
 	}
 
-	// 每个人 ↔ 其他人
-	for _, from := range peers {
-		for _, to := range peers {
-			if from.ID == to.ID {
+	// 双向：每个人订阅其他人的 video + audio
+	for _, sub := range peers {
+		for _, pub := range peers {
+			if sub.ID == pub.ID {
 				continue
 			}
-			if err := m.sfu.AddForwarding(from.ID, to.ID); err != nil {
-				return fmt.Errorf("AddForwarding %s→%s: %w", from.ID, to.ID, err)
+			// sub 收 pub 的 video
+			if _, err := m.sfu.AddConsumer(sub.ID, pub.ID, true); err != nil {
+				return fmt.Errorf("AddConsumer %s<-%s(video): %w", sub.ID, pub.ID, err)
+			}
+			// sub 收 pub 的 audio
+			if _, err := m.sfu.AddConsumer(sub.ID, pub.ID, false); err != nil {
+				return fmt.Errorf("AddConsumer %s<-%s(audio): %w", sub.ID, pub.ID, err)
 			}
 		}
 	}

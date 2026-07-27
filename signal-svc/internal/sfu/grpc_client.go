@@ -63,35 +63,65 @@ func (c *Client) AddPeer(peerID string) (sfuIP string, sfuPort int32,
 		resp.GetDtlsFingerprint(), nil
 }
 
-// SendOffer 发送浏览器 SDP Offer, 获取 SFU 生成的 Answer
-func (c *Client) SendOffer(peerID, sdp string) (answerSDP string, err error) {
+// RecvMid 本地结构：mid → publisher 映射（与 proto RecvMid 对应）
+type RecvMid struct {
+	Mid             string
+	PublisherPeerID string
+	IsVideo         bool
+}
+
+// SendOffer 发送浏览器 SDP Offer + recv_mids，获取 SFU Answer
+func (c *Client) SendOffer(peerID, sdp string, recvMids []RecvMid) (answerSDP string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	resp, err := c.media.SendOffer(ctx, &pb.SendOfferReq{
+	req := &pb.SendOfferReq{
 		PeerId: peerID,
 		Sdp:    sdp,
-	})
+	}
+	for _, rm := range recvMids {
+		req.RecvMids = append(req.RecvMids, &pb.RecvMid{
+			Mid:             rm.Mid,
+			PublisherPeerId: rm.PublisherPeerID,
+			IsVideo:         rm.IsVideo,
+		})
+	}
+
+	resp, err := c.media.SendOffer(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("SendOffer: %w", err)
 	}
 	return resp.GetAnswerSdp(), nil
 }
 
-// AddForwarding 设置转发关系: fromPeer → toPeer
-func (c *Client) AddForwarding(fromPeerID, toPeerID string) error {
+// AddConsumer 为 subscriber 创建订阅 publisher 的 Consumer，返回 SFU 分配的出口 SSRC
+func (c *Client) AddConsumer(subscriberPeerID, publisherPeerID string, isVideo bool) (uint32, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	resp, err := c.media.AddForwarding(ctx, &pb.AddForwardingReq{
-		FromPeerId: fromPeerID,
-		ToPeerId:   toPeerID,
+	resp, err := c.media.AddConsumer(ctx, &pb.AddConsumerReq{
+		SubscriberPeerId: subscriberPeerID,
+		PublisherPeerId:  publisherPeerID,
+		IsVideo:          isVideo,
 	})
 	if err != nil {
-		return fmt.Errorf("AddForwarding: %w", err)
+		return 0, fmt.Errorf("AddConsumer: %w", err)
 	}
-	if !resp.GetSuccess() {
-		return fmt.Errorf("AddForwarding failed: %s → %s", fromPeerID, toPeerID)
+	return resp.GetRewrittenSsrc(), nil
+}
+
+// RemoveConsumer 取消订阅（当前 C++ 实现为占位，真实清理在 RemovePeer）
+func (c *Client) RemoveConsumer(subscriberPeerID, publisherPeerID string, isVideo bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := c.media.RemoveConsumer(ctx, &pb.RemoveConsumerReq{
+		SubscriberPeerId: subscriberPeerID,
+		PublisherPeerId:  publisherPeerID,
+		IsVideo:          isVideo,
+	})
+	if err != nil {
+		return fmt.Errorf("RemoveConsumer: %w", err)
 	}
 	return nil
 }
