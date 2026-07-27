@@ -7,6 +7,8 @@
 #include <cstring>
 #include <iostream>
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 
 Router::Router(std::shared_ptr<UdpServer> udp,
                std::shared_ptr<RouteTable> table)
@@ -253,9 +255,162 @@ Consumer* Router::findConsumerByOutSsrc(uint32_t outSsrc) {
     return (it != _outSsrcToConsumer.end()) ? it->second : nullptr;
 }
 
-// === RTCP 翻译：Task 6 实现具体逻辑，先空实现占位 ===
-void Router::onRtcpPacket(const uint8_t*, size_t, Peer*) {}
-void Router::handlePLI(const uint8_t*, size_t, Peer*) {}
-void Router::handleNACK(const uint8_t*, size_t, Peer*) {}
-void Router::handleRR(const uint8_t*, size_t, Peer*) {}
-void Router::generateAndSendSR(Consumer*) {}
+// ============================================================
+// RTCP 包类型判定（内联，避免依赖 RtcpHandler 实例）
+//   PLI:  byte[1]==206 && (byte[0]&0x1F)==1
+//   NACK: byte[1]==205 && (byte[0]&0x1F)==1
+//   SR:   byte[1]==200
+//   RR:   byte[1]==201
+// ============================================================
+static bool rtcpIsPLI(const uint8_t* p, size_t len) {
+    return len >= 12 && p[1] == 206 && (p[0] & 0x1F) == 1;
+}
+static bool rtcpIsNACK(const uint8_t* p, size_t len) {
+    return len >= 16 && p[1] == 205 && (p[0] & 0x1F) == 1;
+}
+static bool rtcpIsSR(const uint8_t* p, size_t len)  { return len >= 28 && p[1] == 200; }
+static bool rtcpIsRR(const uint8_t* p, size_t len)  { return len >= 8  && p[1] == 201; }
+
+// NTP 时间戳（RFC 3550）：秒(32) + 分数(32)，从 1900-01-01 起算
+static uint64_t getNtpTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto dur = now.time_since_epoch();
+    int64_t secs = std::chrono::duration_cast<std::chrono::seconds>(dur).count();
+    int64_t frac = std::chrono::duration_cast<std::chrono::nanoseconds>(dur).count() % 1000000000;
+    // Unix epoch (1970) → NTP epoch (1900) 偏移 2208988800 秒
+    uint64_t ntpSecs = static_cast<uint64_t>(secs) + 2208988800ULL;
+    uint64_t ntpFrac = (static_cast<uint64_t>(frac) << 32) / 1000000000ULL;
+    return (ntpSecs << 32) | ntpFrac;
+}
+
+// ============================================================
+// onRtcpPacket：RTCP 翻译统一入口
+//   PLI/NACK/RR：fromPeer 是订阅者，翻译 SSRC 后转发给 publisher
+//   SR：fromPeer 是 publisher，丢弃（SFU 用 Consumer 统计自行重新生成 SR）
+// ============================================================
+void Router::onRtcpPacket(const uint8_t* rtcp, size_t len, Peer* fromPeer) {
+    if (rtcpIsPLI(rtcp, len))      handlePLI(rtcp, len, fromPeer);
+    else if (rtcpIsNACK(rtcp, len)) handleNACK(rtcp, len, fromPeer);
+    else if (rtcpIsRR(rtcp, len))   handleRR(rtcp, len, fromPeer);
+    else if (rtcpIsSR(rtcp, len))   { /* publisher→SFU 的 SR，丢弃 */ }
+    // 其他类型（REMB/SDES/BYE）先忽略
+}
+
+// ============================================================
+// PLI 翻译：mediaSSRC 从"出口"翻译为"发送方原始"，转发给 publisher
+// ============================================================
+void Router::handlePLI(const uint8_t* rtcp, size_t len, Peer* subscriber) {
+    (void)len;
+    uint32_t outSsrc;
+    memcpy(&outSsrc, rtcp + 8, 4);
+    outSsrc = ntohl(outSsrc);
+
+    Consumer* c = findConsumerByOutSsrc(outSsrc);
+    if (!c || !c->publisher || !c->publisher->srtp) return;
+    Peer* publisher = c->publisher;
+
+    uint8_t pli[12];
+    pli[0] = 0x81; pli[1] = 206;
+    uint16_t l = htons(2); memcpy(pli+2, &l, 2);
+    uint32_t ss = 0; memcpy(pli+4, &ss, 4);                 // SFU senderSSRC=0
+    uint32_t med = htonl(c->publisherSsrc); memcpy(pli+8, &med, 4);  // 翻译为原始 SSRC
+
+    uint8_t out[64]; memcpy(out, pli, 12); int outLen = 12;
+    if (publisher->srtp->protectRtcp(out, &outLen)) {
+        _udp->sendTo(out, static_cast<size_t>(outLen), publisher->remoteEp);
+    }
+}
+
+// ============================================================
+// NACK 翻译：PID 从"出口 seq 空间"翻译回"原始 seq 空间"
+//   出口 seq = 原 seq + seqDelta  →  原 seq = 出口 seq - seqDelta
+//   BLP 是相对 PID 的位掩码，与 SSRC 无关，非 simulcast 下不变
+// ============================================================
+void Router::handleNACK(const uint8_t* rtcp, size_t len, Peer* subscriber) {
+    (void)len; (void)subscriber;
+    uint32_t outSsrc;
+    memcpy(&outSsrc, rtcp + 8, 4);
+    outSsrc = ntohl(outSsrc);
+
+    uint16_t pid, blp;
+    memcpy(&pid, rtcp + 12, 2); pid = ntohs(pid);
+    memcpy(&blp, rtcp + 14, 2); blp = ntohs(blp);
+
+    Consumer* c = findConsumerByOutSsrc(outSsrc);
+    if (!c || !c->publisher || !c->publisher->srtp) return;
+    Peer* publisher = c->publisher;
+
+    uint16_t origPid = pid - static_cast<uint16_t>(c->seqDelta);
+    uint16_t origBlp = blp;
+
+    uint8_t nack[16];
+    nack[0] = 0x81; nack[1] = 205;
+    uint16_t l = htons(3); memcpy(nack+2, &l, 2);
+    uint32_t ss = 0; memcpy(nack+4, &ss, 4);
+    uint32_t med = htonl(c->publisherSsrc); memcpy(nack+8, &med, 4);
+    uint16_t p = htons(origPid); memcpy(nack+12, &p, 2);
+    uint16_t b = htons(origBlp); memcpy(nack+14, &b, 2);
+
+    uint8_t out[64]; memcpy(out, nack, 16); int outLen = 16;
+    if (publisher->srtp->protectRtcp(out, &outLen)) {
+        _udp->sendTo(out, static_cast<size_t>(outLen), publisher->remoteEp);
+    }
+}
+
+// ============================================================
+// RR 翻译：reportee SSRC 从"出口"翻译为"原始"，其余字段透传
+// ============================================================
+void Router::handleRR(const uint8_t* rtcp, size_t len, Peer* subscriber) {
+    (void)subscriber;
+    if (len < 8) return;
+    uint32_t outSsrc;
+    memcpy(&outSsrc, rtcp + 4, 4);  // RR header 的 sender SSRC（这里取 report block 前的 SSRC）
+    outSsrc = ntohl(outSsrc);
+
+    Consumer* c = findConsumerByOutSsrc(outSsrc);
+    if (!c || !c->publisher || !c->publisher->srtp) return;
+    Peer* publisher = c->publisher;
+
+    // 拷贝原 RR，把 reportee SSRC 替换为 publisherSsrc（简化：只替换第一个 report block 的 SSRC）
+    std::vector<uint8_t> out(rtcp, rtcp + len);
+    if (out.size() >= 12) {
+        uint32_t med = htonl(c->publisherSsrc);
+        memcpy(out.data() + 8, &med, 4);  // 第一个 report block 的 SSRC
+    }
+    int outLen = static_cast<int>(out.size());
+    if (publisher->srtp->protectRtcp(out.data(), &outLen)) {
+        _udp->sendTo(out.data(), static_cast<size_t>(outLen), publisher->remoteEp);
+    }
+}
+
+// ============================================================
+// SR 重新生成：SFU 作为该流的"发送方"向订阅者发 SR
+//   sender SSRC = 出口 SSRC（订阅者视角的发送方 = SFU）
+//   pktCnt/octCnt = 该 Consumer 的转发统计
+// 触发：由外部定时器调用（Task 15 部署后可加定时器；此处提供方法）
+// ============================================================
+void Router::generateAndSendSR(Consumer* c) {
+    if (!c || !c->subscriber || !c->subscriber->srtp) return;
+    Peer* subscriber = c->subscriber;
+
+    uint64_t ntp = getNtpTimestamp();
+    uint32_t ntpHi = static_cast<uint32_t>(ntp >> 32);
+    uint32_t ntpLo = static_cast<uint32_t>(ntp & 0xFFFFFFFF);
+
+    uint8_t sr[28];
+    sr[0] = 0x80; sr[1] = 200;
+    uint16_t l = htons(6); memcpy(sr+2, &l, 2);
+    uint32_t sss = htonl(c->rewrittenSsrc); memcpy(sr+4, &sss, 4);
+    uint32_t hi = htonl(ntpHi); memcpy(sr+8, &hi, 4);
+    uint32_t lo = htonl(ntpLo); memcpy(sr+12, &lo, 4);
+    uint32_t rtpTs = htonl(c->lastSentTimestamp); memcpy(sr+16, &rtpTs, 4);
+    uint32_t pc = htonl(c->packetsSent); memcpy(sr+20, &pc, 4);
+    uint32_t oc = htonl(c->octetsSent); memcpy(sr+24, &oc, 4);
+
+    uint8_t out[64]; memcpy(out, sr, 28); int outLen = 28;
+    if (subscriber->srtp->protectRtcp(out, &outLen)) {
+        _udp->sendTo(out, static_cast<size_t>(outLen), subscriber->remoteEp);
+        c->lastSrNtpTs = ntpHi;  // 中间 32 位（简化）
+        c->lastSrRtpTs = c->lastSentTimestamp;
+    }
+}

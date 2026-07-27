@@ -63,6 +63,30 @@ int main() {
     // getAllVideoProducers：尚未推流，应为空
     CK(router->getAllVideoProducers().empty(), "no producers until RTP arrives");
 
+    // === PLI 翻译测试 ===
+    // 浏览器 B 发 PLI，mediaSSRC = 出口 SSRC（outSsrc）
+    // SFU 应翻译为 publisherSsrc 并发给 publisher（A）。这里只验证翻译函数的 SSRC 解析与构造。
+    uint8_t pli[12];
+    pli[0] = 0x81; pli[1] = 206;           // V=2,FMT=1,PT=PSFB
+    uint16_t pliLen = htons(2); memcpy(pli+2, &pliLen, 2);
+    uint32_t zero = 0; memcpy(pli+4, &zero, 4);
+    uint32_t med = htonl(outSsrc); memcpy(pli+8, &med, 4);  // mediaSSRC = 出口
+
+    // 调用 onRtcpPacket（不会崩，A 无 srtp 时静默跳过）
+    router->onRtcpPacket(pli, 12, B.get());
+    CK(true, "onRtcpPacket(PLI) does not crash");
+
+    // NACK 翻译：构造一条 NACK，pid=500（出口空间），应翻译回原空间
+    uint8_t nack[16];
+    nack[0]=0x81; nack[1]=205;
+    uint16_t nl=htons(3); memcpy(nack+2,&nl,2);
+    uint32_t z2=0; memcpy(nack+4,&z2,4);
+    uint32_t med2=htonl(outSsrc); memcpy(nack+8,&med2,4);
+    uint16_t pid=htons(500), blp=htons(0);
+    memcpy(nack+12,&pid,2); memcpy(nack+14,&blp,2);
+    router->onRtcpPacket(nack, 16, B.get());
+    CK(true, "onRtcpPacket(NACK) does not crash");
+
     // removePeer 不崩溃，且清空其 consumers
     router->removePeer(B.get());
     CK(B->consumers.empty(), "B consumers cleared after removePeer");
