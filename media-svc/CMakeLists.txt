@@ -29,7 +29,6 @@ set(SFU_SRCS
     sfu/Router.cpp
     sfu/Peer.cpp
     sfu/RouteTable.cpp
-    sfu/Forwarder.cpp
 )
 
 # === 传输层 ===
@@ -117,9 +116,9 @@ target_link_libraries(media-svc
     ${SRTP2_LIBRARIES}
 )
 
-# === 转发测试（仅依赖 SFU 核心，不需要 gRPC/Config/RtcpHandler） ===
-add_executable(test_forward
-    sfu/test_forward.cpp
+# === Consumer 模型单元测试（替代旧 test_forward） ===
+add_executable(test_consumer
+    sfu/test_consumer.cpp
     sfu/Router.cpp
     sfu/Peer.cpp
     sfu/RouteTable.cpp
@@ -128,11 +127,11 @@ add_executable(test_forward
     transport/SrtpContext.cpp
     rtp/RtpHeader.cpp
 )
-target_include_directories(test_forward PRIVATE
+target_include_directories(test_consumer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${SRTP2_INCLUDE_DIRS}
 )
-target_link_libraries(test_forward
+target_link_libraries(test_consumer
     Boost::boost
     OpenSSL::SSL
     OpenSSL::Crypto
