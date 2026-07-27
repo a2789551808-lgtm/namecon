@@ -21,6 +21,10 @@ bool SdpParser::parseOffer(const std::string& sdp) {
 
     while (std::getline(stream, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
+        // 容错：去除行首空白（部分 offer 在 CRLF 后带空格，浏览器 SDP 一般无此问题）
+        size_t firstNWS = line.find_first_not_of(" \t");
+        if (firstNWS == std::string::npos) continue;  // 空行跳过
+        if (firstNWS > 0) line.erase(0, firstNWS);
 
         // m= 行：开始一个新的 media section
         if (line.compare(0, 2, "m=") == 0) {
@@ -34,23 +38,25 @@ bool SdpParser::parseOffer(const std::string& sdp) {
             continue;
         }
 
-        if (!current) {
-            // 全局属性
-            std::string val = extractAttr(line, "ice-ufrag");
-            if (!val.empty()) { _iceUfrag = val; continue; }
-            val = extractAttr(line, "ice-pwd");
-            if (!val.empty()) { _icePwd = val; continue; }
-            val = extractAttr(line, "fingerprint");
-            if (!val.empty()) {
+        // 全局属性（取首次出现；真实浏览器 SDP 中 ice-ufrag/pwd/fingerprint
+        // 常出现在 m= section 内部，因此无论是否已进入 section 都需检查）
+        std::string val = extractAttr(line, "ice-ufrag");
+        if (!val.empty()) { if (_iceUfrag.empty()) _iceUfrag = val; continue; }
+        val = extractAttr(line, "ice-pwd");
+        if (!val.empty()) { if (_icePwd.empty()) _icePwd = val; continue; }
+        val = extractAttr(line, "fingerprint");
+        if (!val.empty()) {
+            if (_fingerprint.empty()) {
                 size_t space = val.find(' ');
                 _fingerprint = (space != std::string::npos) ? val.substr(space + 1) : val;
-                continue;
             }
             continue;
         }
 
+        if (!current) continue;
+
         // 当前 section 的属性
-        std::string val = extractAttr(line, "mid");
+        val = extractAttr(line, "mid");
         if (!val.empty()) { current->mid = val; continue; }
 
         // direction: a=sendrecv / a=sendonly / a=recvonly / a=inactive
@@ -135,6 +141,18 @@ std::string SdpParser::generateAnswer(const std::string& offerSdp) {
         answer << "a=mid:" << sec.mid << "\r\n";
         answer << "a=" << dir << "\r\n";
         answer << "a=rtpmap:" << pt << " " << codec << "\r\n";
+
+        // === recvonly section 写入 a=ssrc：告知浏览器该 transceiver 期望的出口 SSRC ===
+        if (sec.direction == "recvonly") {
+            auto it = _midSsrc.find(sec.mid);
+            if (it != _midSsrc.end()) {
+                uint32_t ssrc = it->second;
+                answer << "a=ssrc:" << ssrc << " cname:namecon\r\n";
+                answer << "a=ssrc:" << ssrc << " msid:namecon namecon" << ssrc << "\r\n";
+                answer << "a=ssrc:" << ssrc << " mslabel:namecon\r\n";
+                answer << "a=ssrc:" << ssrc << " label:namecon" << ssrc << "\r\n";
+            }
+        }
     }
 
     return answer.str();

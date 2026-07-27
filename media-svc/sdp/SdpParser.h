@@ -2,6 +2,7 @@
 #include <string>
 #include <cstdint>
 #include <vector>
+#include <map>
 
 // SDP 会话描述 - Offer 解析 + Answer 生成（支持多 m= line，Unified Plan）
 class SdpParser {
@@ -13,6 +14,9 @@ public:
                        const std::string& fingerprint);
 
     std::string generateAnswer(const std::string& offerSdp);
+
+    // 设置 mid → 出口 SSRC 映射，generateAnswer 时为 recvonly section 写 a=ssrc
+    void setMidSsrcMap(const std::map<std::string, uint32_t>& m) { _midSsrc = m; }
 
     // 全局：解析出的视频/音频 PT（Router 用它判断 RTP 包是音频还是视频）
     static uint8_t videoPT;
@@ -40,4 +44,6 @@ private:
     std::string _serverUfrag;
     std::string _serverPwd;
     std::string _serverFingerprint;
+
+    std::map<std::string, uint32_t> _midSsrc;  // mid → SFU 出口 SSRC
 };

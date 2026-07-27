@@ -147,3 +147,10 @@ add_executable(test_rtp_header
 target_include_directories(test_rtp_header PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+# === SdpParser a=ssrc 单元测试 ===
+add_executable(test_sdp_ssrc
+    sdp/test_sdp_ssrc.cpp
+    sdp/SdpParser.cpp
+)
+target_include_directories(test_sdp_ssrc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
