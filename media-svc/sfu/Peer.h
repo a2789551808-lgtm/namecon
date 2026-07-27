@@ -18,14 +18,7 @@ struct Peer {
     std::shared_ptr<DtlsContext> dtls;
     std::shared_ptr<SrtpContext> srtp;
 
-    // === Consumer 模型（新） ===
+    // === Consumer 模型 ===
     std::vector<std::unique_ptr<Producer>> producers;  // 该 Peer 发送的流（通常 audio + video）
     std::vector<std::unique_ptr<Consumer>> consumers;   // 该 Peer 订阅的流
-
-    // === 旧字段（Task 10 删除，保留以维持 PacketRouter/test_forward 编译） ===
-    uint32_t audioSsrc = 0;
-    uint32_t videoSsrc = 0;
-    std::vector<Peer*> forwardTo;
-    uint32_t forwardedPackets = 0;
-    uint32_t forwardedOctets  = 0;
 };
