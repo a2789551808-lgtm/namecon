@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include "Consumer.h"
+#include "Producer.h"
 
 class DtlsContext;
 class SrtpContext;
@@ -16,13 +18,14 @@ struct Peer {
     std::shared_ptr<DtlsContext> dtls;
     std::shared_ptr<SrtpContext> srtp;
 
+    // === Consumer 模型（新） ===
+    std::vector<std::unique_ptr<Producer>> producers;  // 该 Peer 发送的流（通常 audio + video）
+    std::vector<std::unique_ptr<Consumer>> consumers;   // 该 Peer 订阅的流
+
+    // === 旧字段（Task 10 删除，保留以维持 PacketRouter/test_forward 编译） ===
     uint32_t audioSsrc = 0;
     uint32_t videoSsrc = 0;
-
-    // 转发目标列表 — Go 信令通过 gRPC 设置"这个 Peer 的包应该转发给谁"
     std::vector<Peer*> forwardTo;
-
-    // 转发统计
     uint32_t forwardedPackets = 0;
     uint32_t forwardedOctets  = 0;
 };
