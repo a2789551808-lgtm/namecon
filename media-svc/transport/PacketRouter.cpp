@@ -161,47 +161,39 @@ void PacketRouter::handleDtls(const uint8_t* data, size_t len,
 }
 
 // ==============================
-// 向所有已有 SRTP 的 Peer 发送 PLI（请求关键帧）
-// 新 Peer 加入时调用，mediaSSRC 设为发送方的视频 SSRC
+// 向所有正在推 video 的 Producer 发送 PLI（请求关键帧）
+// 新 Peer 加入时调用，让正在推流的发送方重发 I 帧给新加入者
 // ==============================
 // 被谁调用：handleDtls 在新 Peer 的 SRTP 刚就绪时调用（newPeer 指向新加入者自己）。
-// 做什么：
-//   遍历所有已建立 SRTP、且已在推视频流的 Peer，向它们逐个发送一条 PLI
-//   (Picture Loss Indication, RFC 4585) 报文，要求对方编码器立即产出一个关键帧。
-//   PLI 的作用：告诉发送方"我这边画面丢了/刚加入没有参考帧，请发一个 I 帧"。
-// mediaSSRC 为什么必须是"视频 SSRC"：
-//   PLI 报文里的 mediaSSRC 字段表示"针对哪一路媒体流请求关键帧"，
-//   关键帧只对视频有意义，所以必须填该发送方的 videoSsrc；填音频 SSRC 或 0 都无效，
-//   对端编码器不会响应。这里用 peer->videoSsrc（发送方此前推流时记录的视频 SSRC）。
-// 关键参数： newPeer -- 刚刚加入的 Peer 指针，遍历时跳过它自己，避免给自己发 PLI。
+// 做什么：拿 Router 里所有 video Producer，向其 publisher 发 PLI，
+//   mediaSSRC = Producer::originalSsrc（发送方原始视频 SSRC）。
+//   跳过 newPeer 自己（避免给自己发 PLI）。
 void PacketRouter::sendPLItoAllPeers(Peer* newPeer) {
-    std::lock_guard<std::mutex> lock(_peerMutex);
-    for (auto& [ep, peer] : _peerMap) {
-        if (peer.get() == newPeer) continue;          // 跳过新加入者自己
-        if (!peer->srtp) continue;                     // 该 Peer 尚未完成 DTLS/SRTP，发不了
-        if (peer->videoSsrc == 0) continue;  // 还没收到过这个 Peer 的视频流，没有可请求的 SSRC
+    if (!_router) return;
+    // 拿所有正在推 video 的 Producer，向其 publisher 发 PLI（请求关键帧给新加入者）
+    auto producers = _router->getAllVideoProducers();
+    for (auto* prod : producers) {
+        Peer* pub = prod->publisher;
+        if (pub == newPeer) continue;          // 跳过新加入者自己
+        if (!pub->srtp) continue;
+        if (prod->originalSsrc == 0) continue;
 
-        // PLI 包结构 (12 字节, RFC 4585)
-        //   byte0: V=2,P=0,FMT=1 -> 0x81；byte1: PT=PSFB=206
         uint8_t pli[12];
-        pli[0] = 0x81;  // V=2, P=0, FMT=1
-        pli[1] = 206;   // PT=PSFB
+        pli[0] = 0x81; pli[1] = 206;
         uint16_t pliLen = htons(2);
         memcpy(pli + 2, &pliLen, 2);
-        uint32_t senderSsrc = 0;  // SFU 自身 SSRC，这里用 0（SFU 不作为媒体发送方）
+        uint32_t senderSsrc = 0;  // SFU 自身 SSRC=0
         memcpy(pli + 4, &senderSsrc, 4);
-        // mediaSSRC 必须是发送方的"视频 SSRC"，对端才会针对视频流生成关键帧
-        uint32_t mediaSsrc = htonl(peer->videoSsrc);  // 发送方的视频 SSRC
+        uint32_t mediaSsrc = htonl(prod->originalSsrc);  // 发送方原始视频 SSRC
         memcpy(pli + 8, &mediaSsrc, 4);
 
-        // PLI 也要经过 SRTP 加密(protect)再发送，否则浏览器会丢弃
         uint8_t out[64];
         memcpy(out, pli, 12);
         int outLen = 12;
-        if (peer->srtp->protectRtcp(out, &outLen)) {
-            _udp->sendTo(out, static_cast<size_t>(outLen), peer->remoteEp);
-            std::cout << "[PacketRouter] Sent PLI to " << peer->peerId
-                      << " (videoSsrc=" << peer->videoSsrc << ")" << std::endl;
+        if (pub->srtp->protectRtcp(out, &outLen)) {
+            _udp->sendTo(out, static_cast<size_t>(outLen), pub->remoteEp);
+            std::cout << "[PacketRouter] Sent PLI to " << pub->peerId
+                      << " (origSsrc=" << prod->originalSsrc << ")" << std::endl;
         }
     }
 }
@@ -211,8 +203,9 @@ void PacketRouter::sendPLItoAllPeers(Peer* newPeer) {
 // ==============================
 // 被谁调用：onPacket 把首字节 >= 128 的包判定为 RTP/RTCP(SRTP) 后调用。
 // 做什么：用该 Peer 的 SrtpContext 对收到的密文做 SRTP 解密(unprotect)，
-//         解出明文后区分 RTP / RTCP 分别交给 Router / RtcpHandler 处理；
-//         若解出的是 RTCP 且为 PLI，则继续调用 forwardPLI 把它转发给发送方。
+//         解出明文后区分 RTP / RTCP 分别交给 Router 处理：
+//           RTP  -> Router::onRtpPacket (转发给订阅者)
+//           RTCP -> Router::onRtcpPacket (PLI/NACK/SR/RR 翻译)
 // 为什么先试 RTP 再试 RTCP 解密：
 //   WebRTC 默认 rtcp-mux，RTP 与 RTCP 共用同一端口、同一 SSRC 空间，
 //   SRTP 对 RTP 和 RTCP 使用不同的认证标签/序号空间（unprotect vs unprotectRtcp）。
@@ -235,85 +228,20 @@ void PacketRouter::handleSrtp(const uint8_t* data, size_t len,
     memcpy(buf, data, len);
     int bufLen = static_cast<int>(len);
 
-    // 先试 RTP 解密，失败则试 RTCP 解密（rtcp-mux 下 RTP/RTCP 共用端口）
-    // RTP 与 RTCP 在 SRTP 中是两个独立的密钥流/序号空间，必须分别尝试。
+    // 先试 RTP 解密，失败则试 RTCP 解密（rtcp-mux 共用端口）
     if (peer->srtp->unprotect(buf, &bufLen)) {
         // RTP 包解密成功 -> 交给 Router 转发给其他订阅者
         if (_router) {
             _router->onRtpPacket(buf, static_cast<size_t>(bufLen), peer.get());
         }
     } else {
-        // RTP 解密失败：可能是 RTCP。需要用原始密文重新拷贝后再试 RTCP 解密
-        // （上一步 unprotect 可能已改动 buf 内容，所以要 memcpy 还原）
         memcpy(buf, data, len);
         bufLen = static_cast<int>(len);
         if (peer->srtp->unprotectRtcp(buf, &bufLen)) {
-            // RTCP 包 -> 交给 RTCP 处理器（NACK/RR/SR 等）
-            if (_rtcp) {
-                _rtcp->onRtcpPacket(buf, static_cast<size_t>(bufLen));
+            // RTCP 统一交 Router 翻译（PLI/NACK/SR/RR），不再自行判 PLI 转发
+            if (_router) {
+                _router->onRtcpPacket(buf, static_cast<size_t>(bufLen), peer.get());
             }
-            // 转发 PLI 给发送方：检查解密后的包是否是 PLI 包
-            // PLI 判据：byte[0] & 0x1F == 1 (FMT=1) 且 byte[1] == 206 (PT=PSFB)
-            if (bufLen >= 12 && (buf[0] & 0x1F) == 1 && buf[1] == 206) {
-                uint32_t mediaSsrc;
-                memcpy(&mediaSsrc, buf + 8, 4);
-                mediaSsrc = ntohl(mediaSsrc);
-                // 找到这个 SSRC 对应的发送方，把 PLI 转发给他（SFU 代理转发）
-                forwardPLI(mediaSsrc, peer.get());
-            }
-        }
-    }
-}
-
-// ==============================
-// 转发浏览器发的 PLI 给发送方
-// 通过 mediaSSRC 查 RouteTable 精确找到发送方，只发给那一个人
-// ==============================
-// 被谁调用：handleSrtp 解出 RTCP 包并判定为 PLI 时调用。
-// 为什么转发浏览器的 PLI：
-//   浏览器(接收端)检测到画面花屏/丢包严重时会自己发出 PLI，请求发送方给一个关键帧。
-//   但浏览器只把 PLI 发给了它直连的 SFU，SFU 必须把这条请求继续中继给真正的"视频发送方"，
-//   否则发送方不知道有接收端需要关键帧，画面就一直恢复不了。
-//   SFU 在这里是"代理转发"角色：把接收端的 PLI 透传给对应的发送端。
-// 做什么：
-//   1) 用 PLI 里的 mediaSSRC 在 Router 的路由表里反查到视频发送方 Peer；
-//   2) 重新构造一条 PLI（SFU 作为发送方，senderSSRC=0），用发送方的 SRTP 加密后发给他。
-// 关键参数：
-//   mediaSsrc -- PLI 报文中"被请求的媒体 SSRC"，即视频发送方的 SSRC，用于定位发送方；
-//   receiver  -- 发出这条 PLI 的接收端 Peer（仅用于日志/上下文，本函数不直接用它发包）。
-void PacketRouter::forwardPLI(uint32_t mediaSsrc, Peer* receiver) {
-    if (!_router) return;
-
-    // 通过 SSRC 在路由表中反查发送方 Peer
-    Peer* sender = _router->findPeerBySsrc(mediaSsrc);
-    if (!sender) {
-        std::cerr << "[PacketRouter] PLI: sender not found for SSRC=" << mediaSsrc << std::endl;
-        return;
-    }
-    if (!sender->srtp) return;  // 发送方还没建立 SRTP，无法加密发送
-
-    // 构造 PLI 包（与 sendPLItoAllPeers 相同的 12 字节结构）
-    uint8_t pli[12];
-    pli[0] = 0x81;  // V=2, P=0, FMT=1
-    pli[1] = 206;   // PT=PSFB
-    uint16_t pliLen = htons(2);
-    memcpy(pli + 2, &pliLen, 2);
-    uint32_t senderSsrc = 0;  // SFU SSRC = 0（SFU 代理发送，不使用自己的 SSRC）
-    memcpy(pli + 4, &senderSsrc, 4);
-    uint32_t netSsrc = htonl(mediaSsrc);
-    memcpy(pli + 8, &netSsrc, 4);
-
-    // 用发送方的 SRTP 上下文加密后，只发给这一个发送方
-    uint8_t out[64];
-    memcpy(out, pli, 12);
-    int outLen = 12;
-    if (sender->srtp->protectRtcp(out, &outLen)) {
-        _udp->sendTo(out, static_cast<size_t>(outLen), sender->remoteEp);
-        static int pliCount = 0;
-        // 限流日志，避免刷屏
-        if (++pliCount <= 10) {
-            std::cout << "[PacketRouter] Forwarded PLI to " << sender->peerId
-                      << " (mediaSsrc=" << mediaSsrc << ")" << std::endl;
         }
     }
 }

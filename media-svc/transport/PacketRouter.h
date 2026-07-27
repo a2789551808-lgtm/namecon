@@ -37,7 +37,6 @@ private:
     void handleDtls(const uint8_t* d, size_t l, const boost::asio::ip::udp::endpoint& ep);
     void handleSrtp(const uint8_t* d, size_t l, const boost::asio::ip::udp::endpoint& ep);
     void sendPLItoAllPeers(Peer* newPeer);
-    void forwardPLI(uint32_t mediaSsrc, Peer* receiver);
 
     std::shared_ptr<UdpServer>    _udp;
     std::shared_ptr<IceServer>    _ice;
