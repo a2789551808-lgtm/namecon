@@ -15,8 +15,9 @@ service MediaService {
   rpc MuteTrack       (MuteTrackReq)        returns (MuteTrackResp);
   rpc GetRoomStats    (RoomStatsReq)        returns (RoomStatsResp);
 
-  // -- SFU 转发关系管理 (Go → C++) --
-  rpc AddForwarding   (AddForwardingReq)    returns (AddForwardingResp);
+  // -- 流级转发关系管理（Consumer 模型，替代旧 AddForwarding） --
+  rpc AddConsumer     (AddConsumerReq)      returns (AddConsumerResp);
+  rpc RemoveConsumer  (RemoveConsumerReq)   returns (RemoveConsumerResp);
 }
 
 // ==========================================
@@ -67,6 +68,13 @@ message SendOfferReq {
   string room_id = 1;
   string peer_id = 2;
   string sdp     = 3;
+  repeated RecvMid recv_mids = 4;  // 订阅者声明的 mid → publisher 映射
+}
+
+message RecvMid {
+  string mid               = 1;  // 订阅者 SDP 里的 mid
+  string publisher_peer_id = 2;  // 该 mid 接收谁的流
+  bool   is_video          = 3;  // true=video, false=audio
 }
 
 message SendOfferResp {
@@ -104,12 +112,21 @@ message RoomStatsResp {
   int32 peer_count = 1;
 }
 
-// -- 转发关系 (Go → C++) --
-message AddForwardingReq {
-  string from_peer_id = 1;  // 谁的媒体流需要转发
-  string to_peer_id   = 2;  // 转发给谁
+// -- 流级转发关系管理（Consumer 模型） --
+message AddConsumerReq {
+  string subscriber_peer_id = 1;  // 接收方
+  string publisher_peer_id  = 2;  // 发送方
+  bool   is_video            = 3;
+}
+message AddConsumerResp {
+  uint32 rewritten_ssrc = 1;    // SFU 分配的出口 SSRC
 }
 
-message AddForwardingResp {
+message RemoveConsumerReq {
+  string subscriber_peer_id = 1;
+  string publisher_peer_id  = 2;
+  bool   is_video            = 3;
+}
+message RemoveConsumerResp {
   bool success = 1;
 }
