@@ -104,10 +104,11 @@ grpc::Status MediaServiceImpl::SendOffer(
         );
     }
 
-    // 把 recv_mids 绑到 Router 的 Consumer，收集 mid → 出口 SSRC
+    // 把 recv_mids 绑到 Router 的 Consumer，收集 mid -> 出口 SSRC
     std::map<std::string, uint32_t> midToSsrc;
     auto subscriber = findPeer(req->peer_id());
     if (subscriber && _router) {
+        // 1. 先绑定本次 recv_mids（新加入的订阅）
         for (const auto& rm : req->recv_mids()) {
             uint32_t ssrc = _router->bindConsumerByMid(
                 subscriber.get(), rm.publisher_peer_id(),
@@ -115,6 +116,13 @@ grpc::Status MediaServiceImpl::SendOffer(
             if (ssrc != 0) {
                 midToSsrc[rm.mid()] = ssrc;
             }
+        }
+        // 2. 补全已绑定的所有 Consumer 的 mid->ssrc
+        //    每次 answer 都必须包含所有 recvonly mid 的 a=ssrc，
+        //    否则浏览器不知道期望哪个 SSRC，收到的 RTP 无法关联到 transceiver
+        auto boundSsrcs = _router->getAllBoundSsrcs(subscriber.get());
+        for (const auto& kv : boundSsrcs) {
+            midToSsrc[kv.first] = kv.second;  // 已存在的会被覆盖为相同值
         }
     }
     parser.setMidSsrcMap(midToSsrc);

@@ -63,6 +63,20 @@ uint32_t Router::addConsumer(Peer* subscriber, Peer* publisher, bool isVideo) {
         registerPeer(subscriber);
         registerPeer(publisher);
         _outSsrcToConsumer[raw->rewrittenSsrc] = raw;
+
+        // 若 publisher 已推流（Producer 已存在），立即关联并回填 publisherSsrc。
+        // 否则 publisherSsrc 留 0，等 findOrCreateProducer 首次见到该 SSRC 时关联。
+        // 这解决"publisher 先推流、subscriber 后加入"的时序问题：
+        //   findOrCreateProducer 只在创建新 Producer 时关联 Consumer，
+        //   若 Producer 已存在则不会遍历关联，必须在此补上。
+        for (auto& p : publisher->producers) {
+            if (p->isVideo == isVideo && p->originalSsrc != 0) {
+                raw->publisherSsrc = p->originalSsrc;
+                p->consumers.push_back(raw);
+                break;
+            }
+        }
+
         subscriber->consumers.push_back(std::move(c));
     }
 
@@ -113,6 +127,16 @@ void Router::removePeer(Peer* peer) {
 }
 
 // ============================================================
+// findProducer：纯读，按 SSRC 查已存在的 Producer（不创建）
+// ============================================================
+Producer* Router::findProducer(Peer* fromPeer, uint32_t ssrc) {
+    for (auto& p : fromPeer->producers) {
+        if (p->originalSsrc == ssrc) return p.get();
+    }
+    return nullptr;
+}
+
+// ============================================================
 // findOrCreateProducer：首次见到某 SSRC 时创建 Producer，
 // 并把所有等待该 (publisher, kind) 的 Consumer 关联上来（回填 publisherSsrc）
 // ============================================================
@@ -129,6 +153,32 @@ Producer* Router::findOrCreateProducer(Peer* fromPeer, uint32_t ssrc, bool isVid
     fromPeer->producers.push_back(std::move(producer));
 
     _table->bind(ssrc, fromPeer);
+
+    std::cout << "[Router] Producer created: " << fromPeer->peerId
+              << " ssrc=" << ssrc << " isVideo=" << isVideo << std::endl;
+
+    // video Producer 创建时立即向 publisher 发 PLI 请求关键帧。
+    // 场景：B 开摄像头后首包到达 SFU，此时 A 早已在等收 B 的视频。
+    // 若不主动请求 I 帧，A 只收到 P 帧无法解码，要等 A 自己发 PLI（有延迟）。
+    if (isVideo && fromPeer->srtp) {
+        uint8_t pli[12];
+        pli[0] = 0x81; pli[1] = 206;
+        uint16_t pliLen = htons(2);
+        memcpy(pli + 2, &pliLen, 2);
+        uint32_t senderSsrc = 0;
+        memcpy(pli + 4, &senderSsrc, 4);
+        uint32_t mediaSsrc = htonl(ssrc);
+        memcpy(pli + 8, &mediaSsrc, 4);
+
+        uint8_t out[64];
+        memcpy(out, pli, 12);
+        int outLen = 12;
+        if (fromPeer->srtp->protectRtcp(out, &outLen)) {
+            _udp->sendTo(out, static_cast<size_t>(outLen), fromPeer->remoteEp);
+            std::cout << "[Router] Sent PLI to " << fromPeer->peerId
+                      << " on new video Producer (ssrc=" << ssrc << ")" << std::endl;
+        }
+    }
 
     // 关联所有等待该 (publisher, kind) 的 Consumer
     for (auto* sub : _allPeers) {
@@ -182,21 +232,56 @@ void Router::onRtpPacket(const uint8_t* plainRtp, size_t len, Peer* fromPeer) {
     RtpHeader hdr;
     if (!RtpHeader::parse(plainRtp, len, hdr)) return;
 
-    bool isVideo = (hdr.payloadType == SdpParser::videoPT);
-    Producer* producer;
+    bool isVideo = (SdpParser::videoPTs.count(hdr.payloadType) > 0);
+
+    // 诊断日志：确认 RTP 包到达（限频避免刷屏）
+    static thread_local int logCount = 0;
+    if (++logCount <= 3 || logCount % 500 == 0) {
+        std::cout << "[Router] RTP from " << fromPeer->peerId
+                  << " ssrc=" << hdr.ssrc << " pt=" << (int)hdr.payloadType
+                  << " seq=" << hdr.sequenceNumber
+                  << " isVideo=" << isVideo
+                  << " (videoPT=" << (int)SdpParser::videoPT
+                  << " audioPT=" << (int)SdpParser::audioPT << ")"
+                  << " #" << logCount << std::endl;
+    }
+    Producer* producer = nullptr;
     std::vector<Consumer*> targets;
+
+    // 快速路径：读锁查已存在的 Producer（绝大多数 RTP 包走这里，高并发友好）
     {
         std::shared_lock<std::shared_mutex> lock(_mutex);
-        producer = findOrCreateProducer(fromPeer, hdr.ssrc, isVideo);
-        if (!producer) return;
-        targets = producer->consumers;  // 快照
+        producer = findProducer(fromPeer, hdr.ssrc);
+        if (producer) {
+            targets = producer->consumers;  // 快照
+        }
     }
+
+    // 慢路径：首次见到该 SSRC，写锁创建 Producer + 关联等待的 Consumer
+    if (!producer) {
+        std::unique_lock<std::shared_mutex> lock(_mutex);
+        // double-check：拿写锁前可能已有别的线程创建了
+        producer = findProducer(fromPeer, hdr.ssrc);
+        if (!producer) {
+            producer = findOrCreateProducer(fromPeer, hdr.ssrc, isVideo);
+        }
+        if (producer) targets = producer->consumers;
+    }
+
     if (targets.empty()) return;
 
     for (auto* c : targets) {
         if (!c->active) continue;
         if (!c->subscriber || !c->subscriber->srtp) continue;
         if (c->recvMid.empty()) continue;  // 还没协商好，跳过（等 SendOffer 绑定后开始转发）
+
+        // 诊断：首次转发时打印
+        if (c->packetsSent == 0) {
+            std::cout << "[Router] FWD first: " << fromPeer->peerId
+                      << " ssrc=" << hdr.ssrc << " -> " << c->subscriber->peerId
+                      << " outSsrc=" << c->rewrittenSsrc
+                      << " mid=" << c->recvMid << std::endl;
+        }
 
         uint8_t out[65536];
         memcpy(out, plainRtp, len);
@@ -215,7 +300,8 @@ uint32_t Router::bindConsumerByMid(Peer* subscriber,
                                    const std::string& publisherPeerId,
                                    bool isVideo,
                                    const std::string& recvMid) {
-    std::shared_lock<std::shared_mutex> lock(_mutex);
+    // 写操作（修改 c->recvMid），必须用写锁
+    std::unique_lock<std::shared_mutex> lock(_mutex);
     for (auto& c : subscriber->consumers) {
         if (c->isVideo == isVideo && c->publisher && c->publisher->peerId == publisherPeerId) {
             c->recvMid = recvMid;
@@ -236,6 +322,17 @@ uint32_t Router::findRewrittenSsrc(Peer* subscriber, const std::string& recvMid)
         if (c->recvMid == recvMid) return c->rewrittenSsrc;
     }
     return 0;
+}
+
+std::map<std::string, uint32_t> Router::getAllBoundSsrcs(Peer* subscriber) {
+    std::shared_lock<std::shared_mutex> lock(_mutex);
+    std::map<std::string, uint32_t> result;
+    for (auto& c : subscriber->consumers) {
+        if (!c->recvMid.empty()) {
+            result[c->recvMid] = c->rewrittenSsrc;
+        }
+    }
+    return result;
 }
 
 std::vector<Producer*> Router::getAllVideoProducers() {
@@ -289,11 +386,27 @@ static uint64_t getNtpTimestamp() {
 //   SR：fromPeer 是 publisher，丢弃（SFU 用 Consumer 统计自行重新生成 SR）
 // ============================================================
 void Router::onRtcpPacket(const uint8_t* rtcp, size_t len, Peer* fromPeer) {
-    if (rtcpIsPLI(rtcp, len))      handlePLI(rtcp, len, fromPeer);
-    else if (rtcpIsNACK(rtcp, len)) handleNACK(rtcp, len, fromPeer);
-    else if (rtcpIsRR(rtcp, len))   handleRR(rtcp, len, fromPeer);
-    else if (rtcpIsSR(rtcp, len))   { /* publisher→SFU 的 SR，丢弃 */ }
-    // 其他类型（REMB/SDES/BYE）先忽略
+    // RTCP compound packet: traverse each sub-packet
+    size_t offset = 0;
+    while (offset + 4 <= len) {
+        const uint8_t* p = rtcp + offset;
+        uint16_t words = (static_cast<uint16_t>(p[2]) << 8) | p[3];
+        size_t pktLen = (static_cast<size_t>(words) + 1) * 4;
+        if (pktLen == 0 || offset + pktLen > len) break;
+
+        size_t remaining = len - offset;
+        if (rtcpIsPLI(p, remaining)) {
+            std::cout << "[Router] RTCP PLI from " << fromPeer->peerId << std::endl;
+            handlePLI(p, pktLen, fromPeer);
+        } else if (rtcpIsNACK(p, remaining)) {
+            handleNACK(p, pktLen, fromPeer);
+        } else if (rtcpIsRR(p, remaining)) {
+            handleRR(p, pktLen, fromPeer);
+        } else if (rtcpIsSR(p, remaining)) {
+            /* publisher->SFU SR, drop */
+        }
+        offset += pktLen;
+    }
 }
 
 // ============================================================

@@ -7,6 +7,7 @@
 #include <mutex>
 #include <random>
 #include <unordered_map>
+#include <map>
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -48,6 +49,10 @@ public:
     // === SendOffer 用：按 recvMid 查出口 SSRC ===
     uint32_t findRewrittenSsrc(Peer* subscriber, const std::string& recvMid);
 
+    // === SendOffer 用：查 subscriber 所有已绑定 recvMid 的 Consumer，返回 mid->ssrc 映射 ===
+    // 每次 SendOffer 都调用，确保 answer 中所有 recvonly mid 都有 a=ssrc（即使本次没新绑 recv_mids）
+    std::map<std::string, uint32_t> getAllBoundSsrcs(Peer* subscriber);
+
     // === PacketRouter::sendPLItoAllPeers 用：拿所有 video Producer ===
     std::vector<Producer*> getAllVideoProducers();
 
@@ -76,6 +81,9 @@ private:
     std::unordered_map<uint32_t, Consumer*> _outSsrcToConsumer;
     Consumer* findConsumerByOutSsrc(uint32_t outSsrc);
 
+    // 纯读：按 SSRC 查已存在的 Producer（不创建）
+    Producer* findProducer(Peer* fromPeer, uint32_t ssrc);
+    // 读写：查不到则创建，并关联等待的 Consumer
     Producer* findOrCreateProducer(Peer* fromPeer, uint32_t ssrc, bool isVideo);
     void registerPeer(Peer* p);
 

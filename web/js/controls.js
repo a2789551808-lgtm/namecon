@@ -22,14 +22,16 @@ document.addEventListener('DOMContentLoaded', () => {
         else volIcon.textContent = '🔊';
     });
 
-    // 摄像头按钮
+    // 摄像头按钮（异步：enableCamera/disableCamera 需要 getUserMedia + renegotiate）
     const camBtn = document.getElementById('camBtn');
     const camLabel = document.getElementById('camLabel');
-    camBtn.addEventListener('click', () => {
-        const enabled = WebRTC.toggleCamera();
+    camBtn.addEventListener('click', async () => {
+        camBtn.disabled = true;  // 防止重复点击
+        const enabled = await WebRTC.toggleCamera();
         camBtn.textContent = enabled ? '📹' : '📷';
         camLabel.textContent = enabled ? '摄像头' : '已关闭';
         camBtn.classList.toggle('active', !enabled);
+        camBtn.disabled = false;
     });
 
     // 录制按钮

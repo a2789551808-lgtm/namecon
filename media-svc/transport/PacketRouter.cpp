@@ -223,6 +223,13 @@ void PacketRouter::handleSrtp(const uint8_t* data, size_t len,
         return;
     }
 
+    // 诊断：SRTP 包到达（限频）
+    static thread_local int srtpLogCount = 0;
+    if (++srtpLogCount <= 3 || srtpLogCount % 1000 == 0) {
+        std::cout << "[PacketRouter] SRTP packet from " << peer->peerId
+                  << " len=" << len << " #" << srtpLogCount << std::endl;
+    }
+
     // 复制一份到可写缓冲区，unprotect 是原地解密
     uint8_t buf[65536];
     memcpy(buf, data, len);
@@ -241,6 +248,14 @@ void PacketRouter::handleSrtp(const uint8_t* data, size_t len,
             // RTCP 统一交 Router 翻译（PLI/NACK/SR/RR），不再自行判 PLI 转发
             if (_router) {
                 _router->onRtcpPacket(buf, static_cast<size_t>(bufLen), peer.get());
+            }
+        } else {
+            // RTP 和 RTCP 解密都失败（仅诊断时开启，量大会刷屏）
+            static thread_local int failCount = 0;
+            if (++failCount <= 5) {
+                std::cerr << "[PacketRouter] SRTP unprotect FAILED both RTP&RTCP from "
+                          << ep.address().to_string() << ":" << ep.port()
+                          << " len=" << len << std::endl;
             }
         }
     }

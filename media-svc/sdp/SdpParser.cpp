@@ -4,6 +4,8 @@
 
 uint8_t SdpParser::videoPT = 96;
 uint8_t SdpParser::audioPT = 111;
+std::set<uint8_t> SdpParser::videoPTs;
+std::set<uint8_t> SdpParser::audioPTs;
 
 static std::string extractAttr(const std::string& line, const std::string& key) {
     std::string prefix = "a=" + key + ":";
@@ -29,9 +31,26 @@ bool SdpParser::parseOffer(const std::string& sdp) {
         // m= 行：开始一个新的 media section
         if (line.compare(0, 2, "m=") == 0) {
             MediaSection sec;
-            size_t space1 = line.find(' ');
-            if (space1 != std::string::npos) {
-                sec.type = line.substr(2, space1 - 2);
+            // m=<type> <port> <proto> <pt1> <pt2> ...
+            std::istringstream ms(line.substr(2));
+            std::string type, port, proto;
+            ms >> type >> port >> proto;
+            // 剩余部分为 PT 列表
+            std::string rest;
+            std::getline(ms, rest);
+            // 去掉前导空格
+            if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
+            sec.type = type;
+            sec.ptList = rest;
+            // 把该 section 的所有 PT 加入对应集合（video/audio）
+            // 这样 Router 能靠集合判断 RTP 包类型，不受浏览器 PT 分配影响
+            {
+                std::istringstream pts(rest);
+                int pt;
+                while (pts >> pt) {
+                    if (type == "video")      videoPTs.insert(static_cast<uint8_t>(pt));
+                    else if (type == "audio") audioPTs.insert(static_cast<uint8_t>(pt));
+                }
             }
             _sections.push_back(sec);
             current = &_sections.back();
@@ -65,19 +84,32 @@ bool SdpParser::parseOffer(const std::string& sdp) {
         if (line == "a=recvonly") { current->direction = "recvonly"; continue; }
         if (line == "a=inactive") { current->direction = "inactive"; continue; }
 
-        val = extractAttr(line, "rtpmap");
-        if (!val.empty()) {
-            size_t space = val.find(' ');
-            std::string pt = (space != std::string::npos) ? val.substr(0, space) : val;
-            std::string codec = (space != std::string::npos) ? val.substr(space + 1) : "";
-            current->payloadType = pt;
-            current->codec = codec;
-            // 更新全局 videoPT/audioPT
-            if (codec.find("VP8") != std::string::npos || codec.find("vp8") != std::string::npos) {
+        // 收集 codec 相关行：rtpmap / rtcp-fb / fmtp
+        // answer 原样镜像这些行，保证浏览器能正确配置 send/recv parameters
+        // （含 RTX 的 apt 关联、NACK/PLI/FIR 反馈机制）
+        if (line.compare(0, 9, "a=rtpmap:") == 0) {
+            current->codecLines.push_back(line);
+            // 解析 rtpmap 更新全局 videoPT/audioPT（Router 用它判 RTP 包类型）
+            // 取该 type 下首个 VP8/opus 的 PT 作为主 codec
+            std::string rv = line.substr(9);
+            size_t space = rv.find(' ');
+            std::string pt = (space != std::string::npos) ? rv.substr(0, space) : rv;
+            std::string codec = (space != std::string::npos) ? rv.substr(space + 1) : "";
+            if (current->type == "video" &&
+                (codec.find("VP8") != std::string::npos || codec.find("vp8") != std::string::npos)) {
                 videoPT = static_cast<uint8_t>(std::stoi(pt));
-            } else if (codec.find("opus") != std::string::npos || codec.find("Opus") != std::string::npos) {
+            } else if (current->type == "audio" &&
+                       (codec.find("opus") != std::string::npos || codec.find("Opus") != std::string::npos)) {
                 audioPT = static_cast<uint8_t>(std::stoi(pt));
             }
+            continue;
+        }
+        if (line.compare(0, 10, "a=rtcp-fb:") == 0) {
+            current->codecLines.push_back(line);
+            continue;
+        }
+        if (line.compare(0, 7, "a=fmtp:") == 0) {
+            current->codecLines.push_back(line);
             continue;
         }
     }
@@ -123,13 +155,20 @@ std::string SdpParser::generateAnswer(const std::string& offerSdp) {
 
     // 为每条 media section 生成 Answer
     for (const auto& sec : _sections) {
-        std::string pt = sec.payloadType.empty() ?
-            (sec.type == "audio" ? "111" : "96") : sec.payloadType;
-        std::string codec = sec.codec.empty() ?
-            (sec.type == "audio" ? "opus/48000/2" : "VP8/90000") : sec.codec;
-        std::string dir = sec.direction.empty() ? "sendrecv" : sec.direction;
+        const std::string& offerDir = sec.direction.empty() ? "sendrecv" : sec.direction;
 
-        answer << "m=" << sec.type << " 9 UDP/TLS/RTP/SAVPF " << pt << "\r\n";
+        // SDP 方向协商（RFC 3264 §6.1）：
+        //   offer sendrecv -> answer sendrecv
+        //   offer sendonly -> answer recvonly
+        //   offer recvonly -> answer sendonly  ← 浏览器想收，SFU 就发
+        //   offer inactive -> answer inactive
+        std::string answerDir;
+        if (offerDir == "sendrecv")      answerDir = "sendrecv";
+        else if (offerDir == "sendonly") answerDir = "recvonly";
+        else if (offerDir == "recvonly") answerDir = "sendonly";
+        else                             answerDir = "inactive";
+
+        answer << "m=" << sec.type << " 9 UDP/TLS/RTP/SAVPF " << sec.ptList << "\r\n";
         answer << "c=IN IP4 0.0.0.0\r\n";
         answer << "a=ice-ufrag:" << srvUf << "\r\n";
         answer << "a=ice-pwd:" << srvPwd << "\r\n";
@@ -139,11 +178,17 @@ std::string SdpParser::generateAnswer(const std::string& offerSdp) {
         answer << "a=setup:passive\r\n";
         answer << "a=rtcp-mux\r\n";
         answer << "a=mid:" << sec.mid << "\r\n";
-        answer << "a=" << dir << "\r\n";
-        answer << "a=rtpmap:" << pt << " " << codec << "\r\n";
+        answer << "a=" << answerDir << "\r\n";
+
+        // 镜像 offer 的所有 codec 相关行（rtpmap/rtcp-fb/fmtp）
+        // 这样浏览器能正确配置 send parameters（RTX apt 关联、反馈机制等），
+        // 避免 "Failed to set remote video description send parameters" 错误
+        for (const auto& cl : sec.codecLines) {
+            answer << cl << "\r\n";
+        }
 
         // === recvonly section 写入 a=ssrc：告知浏览器该 transceiver 期望的出口 SSRC ===
-        if (sec.direction == "recvonly") {
+        if (offerDir == "recvonly") {
             auto it = _midSsrc.find(sec.mid);
             if (it != _midSsrc.end()) {
                 uint32_t ssrc = it->second;
