@@ -88,11 +88,11 @@
             console.log('Joined room, peer:', msg.peer_id);
             UI.addLocalVideo();
             await WebRTC.init(msg);
-            // 为已有参与者添加 recvonly transceiver
+            // 为已有参与者添加 recvonly transceiver（带 peerId，用于 Consumer 绑定）
             if (msg.existing_peers && msg.existing_peers.length > 0) {
                 msg.existing_peers.forEach(p => {
                     UI.addRemoteVideo(p.peer_id, p.username || '远端');
-                    WebRTC.addRecvTransceiver();
+                    WebRTC.addRecvTransceiver(p.peer_id, 'both');
                 });
                 await WebRTC.renegotiate();
             }
@@ -102,10 +102,11 @@
             console.log('[WS] renegotiate:', msg.action, msg.peer_id);
             if (msg.action === 'leave') {
                 UI.removeVideo(msg.peer_id);
+                WebRTC.markTransceiverInactive(msg.peer_id);  // 复用槽位，不重协商
                 return;
             }
             UI.addRemoteVideo(msg.peer_id, msg.username || '远端');
-            WebRTC.addRecvTransceiver();
+            WebRTC.addRecvTransceiver(msg.peer_id, 'both');
             await WebRTC.renegotiate();
         });
 
