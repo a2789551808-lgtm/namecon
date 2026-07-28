@@ -2,6 +2,7 @@ package room
 
 import (
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"sync"
 	"time"
@@ -32,7 +33,7 @@ func (m *Manager) CreateRoom(name string) (*Room, error) {
 	_, _, err := m.sfu.CreateRoom(name)
 	if err != nil {
 		// C++ 调用失败不阻止创建，仅日志
-		fmt.Printf("[room] C++ CreateRoom failed (non-fatal): %v\n", err)
+		slog.Warn("C++ CreateRoom failed (non-fatal)", "error", err)
 	}
 
 	room := &Room{
@@ -75,14 +76,14 @@ func (m *Manager) AddParticipant(roomID, username string) (*Participant, error) 
 	}
 
 	p := &Participant{
-		ID:               peerID,
-		Name:             username,
-		RoomID:           roomID,
-		SfuIP:            sfuIP,
-		SfuPort:          int(sfuPort),
-		IceUfrag:         ufrag,
-		IcePwd:           pwd,
-		DtlsFingerprint:  fp,
+		ID:              peerID,
+		Name:            username,
+		RoomID:          roomID,
+		SfuIP:           sfuIP,
+		SfuPort:         int(sfuPort),
+		IceUfrag:        ufrag,
+		IcePwd:          pwd,
+		DtlsFingerprint: fp,
 	}
 
 	room.mu.Lock()

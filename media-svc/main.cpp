@@ -15,7 +15,7 @@ int main(int argc, char* argv[]) {
         return 0;
 
     } catch (const std::exception& e) {
-        std::cerr << "[main] Fatal: " << e.what() << std::endl;
+        LOG_ERROR("Fatal: {}", e.what());
         return EXIT_FAILURE;
     }
 }

@@ -66,7 +66,7 @@ func (s *Server) Run() error {
 	addr := fmt.Sprintf(":%s", s.cfg.Server.HTTPPort)
 
 	if s.cfg.Server.CertFile != "" && s.cfg.Server.KeyFile != "" {
-		fmt.Printf("NameCon signal-svc starting (HTTPS) on %s\n", addr)
+		slog.Info("signal-svc starting (HTTPS)", "addr", addr)
 		return http.ListenAndServeTLS(addr, s.cfg.Server.CertFile, s.cfg.Server.KeyFile, s.router)
 	}
 

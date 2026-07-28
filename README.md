@@ -44,6 +44,8 @@ make build
 # 或设置环境变量（推荐）：
 PUBLIC_IP=1.2.3.4 docker compose up -d --build
 
+# 日志通过 ./logs:/var/log/namecon 卷持久化到宿主机
+
 # 腾讯云等国内服务器需先配镜像加速：
 sudo mkdir -p /etc/docker
 echo '{"registry-mirrors":["https://mirror.ccs.tencentyun.com"]}' | sudo tee /etc/docker/daemon.json
@@ -77,8 +79,8 @@ namecon/
 ├── docker-compose.yml
 ├── proto/media/              # gRPC 协议定义 (Go & C++ 共享)
 ├── configs/                  # 服务配置文件
-│   ├── media-svc.ini         #   public_ip = SFU 公网地址
-│   └── signal-svc.ini        #   host = media-svc (Docker) / 127.0.0.1 (本地)
+│   ├── media-svc.ini         #   public_ip + [log] 日志配置
+│   └── signal-svc.ini        #   host + [log] 日志配置
 ├── scripts/                  # 构建脚本
 ├── deploy/                   # Docker 部署文件
 │   ├── Dockerfile.media-svc
@@ -111,7 +113,8 @@ namecon/
 | C++ gRPC | gRPC C++ 1.51+ |
 | C++ CRC32 | zlib (`crc32()`) |
 | C++ 配置 | 手写 INI 解析 |
-| C++ 日志 | `spdlog`（链接但未使用，实际用 std::cout） |
+| C++ 日志 | `spdlog` 1.12+（控制台 + rotating file sink，LOG_INFO/WARN/ERROR 宏，[log] 配置段） |
+| Go 日志 | `log/slog` + `lumberjack`（rotating file + 控制台，[log] 配置段） |
 | 构建 | CMake 3.20+ / Go Module |
 | 部署 | Docker + Docker Compose |
 
