@@ -20,6 +20,7 @@ const WebRTC = {
     _renegotiating: false,
     _needsRenegotiate: false,   // addTrack/removeTrack 触发的重协商
     _answerResolver: null,      // 等待 answer 的 Promise resolve
+    _iceRestartTimer: null,     // ICE 断线重连定时器
 
     async init(sfuInfo) {
         console.log('[WebRTC] Init SFU=' + sfuInfo.sfu_ip + ':' + sfuInfo.sfu_port);
@@ -100,7 +101,28 @@ const WebRTC = {
         };
 
         this.pc.oniceconnectionstatechange = () => {
-            console.log('[WebRTC] ICE: ' + this.pc.iceConnectionState);
+            const state = this.pc.iceConnectionState;
+            console.log('[WebRTC] ICE: ' + state);
+
+            // ICE 断线重连
+            if (state === 'disconnected') {
+                console.log('[WebRTC] ICE disconnected, waiting for reconnect...');
+                this._iceRestartTimer = setTimeout(() => {
+                    if (this.pc && this.pc.iceConnectionState !== 'connected' &&
+                        this.pc.iceConnectionState !== 'completed') {
+                        console.log('[WebRTC] ICE still disconnected, triggering restart');
+                        this._doIceRestart();
+                    }
+                }, 3000);
+            } else if (state === 'connected' || state === 'completed') {
+                if (this._iceRestartTimer) {
+                    clearTimeout(this._iceRestartTimer);
+                    this._iceRestartTimer = null;
+                }
+            } else if (state === 'failed') {
+                console.log('[WebRTC] ICE failed, triggering restart immediately');
+                this._doIceRestart();
+            }
         };
 
         // 首次 createOffer（仅本地 sendrecv 音频，无视频）
@@ -258,6 +280,34 @@ const WebRTC = {
         }
     },
 
+    // ICE Restart：重新 createOffer 带 iceRestart，重新协商
+    async _doIceRestart() {
+        if (!this.pc) return;
+        try {
+            console.log('[WebRTC] ICE Restart: creating offer with iceRestart');
+            const offer = await this.pc.createOffer({ iceRestart: true });
+            await this.pc.setLocalDescription(offer);
+            // 收集所有已绑定的 recv_mids（ICE Restart 不改变 m= line 结构）
+            const recvMids = [];
+            for (const [mid, peerId] of Object.entries(this._midPeerMap)) {
+                const tc = this.pc.getTransceivers().find(t => t.mid === mid);
+                if (tc) {
+                    recvMids.push({
+                        mid: mid,
+                        publisher_peer_id: peerId,
+                        kind: tc.receiver.track ? tc.receiver.track.kind : 'video',
+                        is_video: tc.receiver.track ? tc.receiver.track.kind === 'video' : true
+                    });
+                }
+            }
+            this._needsRenegotiate = false;
+            await this._sendOffer({ sdp: offer.sdp, recv_mids: recvMids });
+            console.log('[WebRTC] ICE Restart: answer received');
+        } catch (e) {
+            console.error('[WebRTC] ICE Restart failed:', e);
+        }
+    },
+
     toggleMic() {
         const track = this.localStream.getAudioTracks()[0];
         if (track) { track.enabled = !track.enabled; return track.enabled; }
@@ -301,6 +351,7 @@ const WebRTC = {
     },
 
     cleanup() {
+        if (this._iceRestartTimer) clearTimeout(this._iceRestartTimer);
         if (this._videoTrack) this._videoTrack.stop();
         if (this.pc) { this.pc.close(); this.pc = null; }
         if (this.localStream) this.localStream.getTracks().forEach(t => t.stop());

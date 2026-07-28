@@ -6,6 +6,7 @@
 #include "../rtcp/RtcpHandler.h"
 #include "../sfu/Peer.h"
 #include "../sfu/Router.h"
+#include "../utils/Logger.h"
 #include <iostream>
 #include <cstring>
 #include <arpa/inet.h>
@@ -127,8 +128,8 @@ void PacketRouter::handleDtls(const uint8_t* data, size_t len,
         peer->dtls->setSendCallback([udp = _udp, ep](const uint8_t* d, size_t l) {
             udp->sendTo(d, l, ep);
         });
-        std::cout << "[PacketRouter] New DTLS session for "
-                  << ep.address().to_string() << ":" << ep.port() << std::endl;
+        LOG_INFO("New DTLS session for {}:{}",
+                 ep.address().to_string(), ep.port());
     }
 
     // 记录握手"处理前"是否已完成，用于下面判断是否"刚刚完成"
@@ -143,19 +144,16 @@ void PacketRouter::handleDtls(const uint8_t* data, size_t len,
         std::string keys = peer->dtls->exportSrtpKeys();
         if (!keys.empty() && srtp->init(keys)) {
             peer->srtp = srtp;
-            std::cout << "==============================================" << std::endl;
-            std::cout << "[PacketRouter] SRTP READY for " << peer->peerId
-                      << " @ " << ep.address().to_string() << ":" << ep.port()
-                      << std::endl;
-            std::cout << "==============================================" << std::endl;
+            LOG_INFO("SRTP READY for {} @ {}:{}",
+                     peer->peerId, ep.address().to_string(), ep.port());
 
             // 向所有已有 SRTP 的 Peer 发送 PLI，请求关键帧。
             // 新 Peer 刚加入 SFU，尚未持有任何参考帧，只有关键帧(I 帧)才能开始解码，
             // 因此需要立刻让正在推流的发送方重发一个关键帧。
             sendPLItoAllPeers(peer.get());
         } else {
-            std::cerr << "[PacketRouter] SRTP init FAILED for "
-                      << ep.address().to_string() << ":" << ep.port() << std::endl;
+            LOG_ERROR("SRTP init FAILED for {}:{}",
+                      ep.address().to_string(), ep.port());
         }
     }
 }
@@ -192,8 +190,7 @@ void PacketRouter::sendPLItoAllPeers(Peer* newPeer) {
         int outLen = 12;
         if (pub->srtp->protectRtcp(out, &outLen)) {
             _udp->sendTo(out, static_cast<size_t>(outLen), pub->remoteEp);
-            std::cout << "[PacketRouter] Sent PLI to " << pub->peerId
-                      << " (origSsrc=" << prod->originalSsrc << ")" << std::endl;
+            LOG_INFO("Sent PLI to {} (origSsrc={})", pub->peerId, prod->originalSsrc);
         }
     }
 }
@@ -218,16 +215,9 @@ void PacketRouter::handleSrtp(const uint8_t* data, size_t len,
     auto peer = getOrCreatePeer(ep);
     if (!peer->srtp) {
         // DTLS 握手未完成或失败，还没有 SRTP 上下文，无法解密
-        std::cerr << "[PacketRouter] No SRTP context for "
-                  << ep.address().to_string() << ":" << ep.port() << std::endl;
+        LOG_WARN("No SRTP context for {}:{}",
+                 ep.address().to_string(), ep.port());
         return;
-    }
-
-    // 诊断：SRTP 包到达（限频）
-    static thread_local int srtpLogCount = 0;
-    if (++srtpLogCount <= 3 || srtpLogCount % 1000 == 0) {
-        std::cout << "[PacketRouter] SRTP packet from " << peer->peerId
-                  << " len=" << len << " #" << srtpLogCount << std::endl;
     }
 
     // 复制一份到可写缓冲区，unprotect 是原地解密
@@ -248,14 +238,6 @@ void PacketRouter::handleSrtp(const uint8_t* data, size_t len,
             // RTCP 统一交 Router 翻译（PLI/NACK/SR/RR），不再自行判 PLI 转发
             if (_router) {
                 _router->onRtcpPacket(buf, static_cast<size_t>(bufLen), peer.get());
-            }
-        } else {
-            // RTP 和 RTCP 解密都失败（仅诊断时开启，量大会刷屏）
-            static thread_local int failCount = 0;
-            if (++failCount <= 5) {
-                std::cerr << "[PacketRouter] SRTP unprotect FAILED both RTP&RTCP from "
-                          << ep.address().to_string() << ":" << ep.port()
-                          << " len=" << len << std::endl;
             }
         }
     }

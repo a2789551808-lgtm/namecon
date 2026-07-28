@@ -2,7 +2,7 @@ package core
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -31,12 +31,12 @@ func New(configPath string) (*Server, error) {
 	}
 
 	// gRPC → C++
-	sfuAddr := fmt.Sprintf("%s:%d", cfg.MediaService.Host, cfg.MediaService.Port)
+	sfuAddr := fmt.Sprintf("%s:%s", cfg.Media.Host, cfg.Media.Port)
 	sfuClient, err := sfu.NewClient(sfuAddr)
 	if err != nil {
 		return nil, fmt.Errorf("connect media-svc: %w", err)
 	}
-	log.Println("gRPC connected to media-svc ✅")
+	slog.Info("gRPC connected to media-svc ✅")
 
 	// Room 管理器
 	roomMgr := room.NewManager(sfuClient)
@@ -63,7 +63,7 @@ func New(configPath string) (*Server, error) {
 
 // Run 启动 HTTP/HTTPS 服务（阻塞）
 func (s *Server) Run() error {
-	addr := fmt.Sprintf(":%d", s.cfg.Server.HTTPPort)
+	addr := fmt.Sprintf(":%s", s.cfg.Server.HTTPPort)
 
 	if s.cfg.Server.CertFile != "" && s.cfg.Server.KeyFile != "" {
 		fmt.Printf("NameCon signal-svc starting (HTTPS) on %s\n", addr)

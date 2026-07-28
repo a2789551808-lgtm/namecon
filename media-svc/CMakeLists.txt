@@ -135,6 +135,7 @@ target_link_libraries(test_consumer
     Boost::boost
     OpenSSL::SSL
     OpenSSL::Crypto
+    spdlog::spdlog
     ${SRTP2_LIBRARIES}
 )
 

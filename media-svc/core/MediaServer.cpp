@@ -8,6 +8,7 @@
 #include "../rtcp/RtcpHandler.h"
 #include "../sfu/Router.h"
 #include "../sfu/RouteTable.h"
+#include "../utils/Logger.h"
 
 #include <boost/asio.hpp>
 #include <iostream>
@@ -17,12 +18,9 @@
 MediaServer::MediaServer(const std::string& configPath)
     : _configPath(configPath)
 {
-    // ① 加载配置
-    ConfigMgr::GetInstance().Load(_configPath);
-
-    // ② 生成 DTLS 自签证书
+    // ① 生成 DTLS 自签证书（配置已由 Logger::init 加载）
     _dtlsFingerprint = DtlsContext::initGlobals();
-    std::cout << "[main] DTLS fingerprint: " << _dtlsFingerprint << std::endl;
+    LOG_INFO("DTLS fingerprint: {}", _dtlsFingerprint);
 
     // ③ asio
     _ioc = std::make_unique<boost::asio::io_context>();
@@ -88,14 +86,14 @@ void MediaServer::setupSignals() {
         *_ioc, SIGINT, SIGTERM);
     signals->async_wait([this](const boost::system::error_code& error, int) {
         if (!error) {
-            std::cout << "\n[main] Shutting down..." << std::endl;
+            LOG_INFO("Shutting down...");
             stop();
         }
     });
 }
 
 void MediaServer::run() {
-    std::cout << "NameCon media-svc starting..." << std::endl;
+    LOG_INFO("NameCon media-svc starting...");
 
     // gRPC server 在独立线程阻塞等待
     std::thread grpcThread([this] {
@@ -107,8 +105,7 @@ void MediaServer::run() {
     for (unsigned int i = 0; i < kThreadCount; ++i) {
         threads.emplace_back([this] { _ioc->run(); });
     }
-    std::cout << "[main] io_context running on " << kThreadCount
-              << " threads" << std::endl;
+    LOG_INFO("io_context running on {} threads", kThreadCount);
 
     for (auto& t : threads) t.join();
     grpcThread.join();

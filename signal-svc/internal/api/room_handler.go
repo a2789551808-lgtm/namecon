@@ -2,7 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -59,7 +59,7 @@ func (h *APIHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 
 	// 为房间内每对参会者建立双向 Consumer（每人收其他人的音视频）
 	if err := h.roomMgr.SetupConsumers(roomID); err != nil {
-		log.Printf("[API] SetupConsumers error: %v", err)
+		slog.Error("SetupConsumers error", "error", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{

@@ -1,4 +1,5 @@
 #include "RtcpHandler.h"
+#include "../utils/Logger.h"
 #include <cstring>
 #include <arpa/inet.h>
 #include <iostream>
@@ -32,8 +33,7 @@ void RtcpHandler::onRtcpPacket(const uint8_t* data, size_t len) {
 
         size_t packetLen = (static_cast<size_t>(length) + 1) * 4;
         if (p + packetLen > end) {
-            std::cerr << "[RtcpHandler] Truncated packet, pt="
-                      << static_cast<int>(pt) << std::endl;
+            LOG_WARN("Truncated packet, pt={}", static_cast<int>(pt));
             break;
         }
 

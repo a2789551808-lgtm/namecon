@@ -98,21 +98,18 @@
             }
         });
 
-        signaling.on('renegotiate', async (msg) => {
-            console.log('[WS] renegotiate:', msg.action, msg.peer_id);
-            if (msg.action === 'leave') {
-                UI.removeVideo(msg.peer_id);
-                WebRTC.markTransceiverInactive(msg.peer_id);  // 复用槽位，不重协商
-                return;
-            }
-            UI.addRemoteVideo(msg.peer_id, msg.username || '远端');
-            WebRTC.addRecvTransceiver(msg.peer_id, 'both');
-            await WebRTC.renegotiate();
-        });
-
         signaling.on('peer-left', (msg) => {
             console.log('Peer left:', msg.peer_id);
             UI.removeVideo(msg.peer_id);
+            WebRTC.markTransceiverInactive(msg.peer_id);
+            WebRTC.renegotiate();
+        });
+
+        signaling.on('renegotiate', async (msg) => {
+            console.log('[WS] renegotiate:', msg.action, msg.peer_id);
+            UI.addRemoteVideo(msg.peer_id, msg.username || '远端');
+            WebRTC.addRecvTransceiver(msg.peer_id, 'both');
+            await WebRTC.renegotiate();
         });
 
         signaling.on('error', (msg) => {

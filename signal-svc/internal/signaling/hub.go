@@ -3,7 +3,7 @@ package signaling
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 
@@ -37,13 +37,13 @@ func NewHub(mgr *room.Manager, sfuClient *sfu.Client) *Hub {
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Printf("[WS] ServeWS panic recovered: %v", err)
+			slog.Error("ServeWS panic recovered", "error", err)
 		}
 	}()
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[WS] Upgrade error: %v", err)
+		slog.Error("Upgrade error", "error", err)
 		return
 	}
 
@@ -100,7 +100,7 @@ func (h *Hub) handleMessage(client *Client, raw []byte) {
 	case "leave":
 		h.handleLeave(client)
 	default:
-		log.Printf("[WS] Unknown message type: %s", msg.Type)
+		slog.Warn("Unknown message type", "type", msg.Type)
 	}
 }
 
@@ -159,10 +159,10 @@ func (h *Hub) handleJoin(client *Client, msg Message) {
 
 	// 为房间内每对参会者建立双向 Consumer（B 收 A，A 收 B）
 	if err := h.roomMgr.SetupConsumers(join.RoomID); err != nil {
-		log.Printf("[WS] SetupConsumers error: %v", err)
+		slog.Error("SetupConsumers error", "error", err)
 	}
 
-	log.Printf("[WS] %s joined room %s as %s", join.Username, join.RoomID, p.ID)
+	slog.Info("joined room", "user", join.Username, "room", join.RoomID, "peer", p.ID)
 }
 
 func (h *Hub) handleOffer(client *Client, msg Message) {
@@ -199,28 +199,26 @@ func (h *Hub) handleOffer(client *Client, msg Message) {
 		"sdp":  answerSDP,
 	})
 
-	log.Printf("[WS] Offer → Answer for %s (%d bytes, %d recv_mids)",
-		client.peerID, len(answerSDP), len(recvMids))
+	slog.Info("Offer -> Answer", "peer", client.peerID, "answer_bytes", len(answerSDP), "recv_mids", len(recvMids))
 }
 
 func (h *Hub) handleLeave(client *Client) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("[WS] handleLeave panic: %v", r)
+			slog.Error("handleLeave panic", "error", r)
 		}
 	}()
 
 	if client.roomID != "" && client.peerID != "" {
 		if err := h.roomMgr.RemoveParticipant(client.roomID, client.peerID); err != nil {
-			log.Printf("[WS] RemoveParticipant error: %v", err)
+			slog.Error("RemoveParticipant error", "error", err)
 		}
-		// 通知房间内其他人：有人离开，移除对应 video
+		// 通知房间内其他人：有人离开，移除对应 video 和 transceiver
 		leaveNotify, _ := json.Marshal(map[string]string{
-			"type":    "renegotiate",
+			"type":    "peer-left",
 			"peer_id": client.peerID,
-			"action":  "leave",
 		})
-		h.broadcastToRoom(client.roomID, leaveNotify, nil)
+		h.broadcastToRoom(client.roomID, leaveNotify, client)
 	}
 
 	h.mu.Lock()

@@ -6,6 +6,7 @@
 #include "../transport/DtlsContext.h"
 #include "../sdp/SdpParser.h"
 #include "../config/ConfigMgr.h"
+#include "../utils/Logger.h"
 #include <ctime>
 #include <random>
 #include <cstdlib>
@@ -41,8 +42,7 @@ grpc::Status MediaServiceImpl::CreateRoom(
     resp->set_room_id(roomId);
     resp->set_token("token_" + roomId);
 
-    std::cout << "[gRPC] CreateRoom: " << req->room_name()
-              << " → " << roomId << std::endl;
+    LOG_INFO("CreateRoom: {} -> {}", req->room_name(), roomId);
     return grpc::Status::OK;
 }
 
@@ -77,8 +77,7 @@ grpc::Status MediaServiceImpl::AddPeer(
     }
     resp->set_dtls_fingerprint(DtlsContext::fingerprint());
 
-    std::cout << "[gRPC] AddPeer: " << req->peer_id()
-              << " (ufrag=" << resp->ice_ufrag() << ")" << std::endl;
+    LOG_INFO("AddPeer: {} (ufrag={})", req->peer_id(), resp->ice_ufrag());
     return grpc::Status::OK;
 }
 
@@ -131,13 +130,12 @@ grpc::Status MediaServiceImpl::SendOffer(
     if (answer.empty()) {
         // SDP 解析失败（如无 media track），返回空 answer 而不报错
         // 浏览器会在 getUserMedia 成功后重试
-        std::cerr << "[gRPC] SendOffer: empty answer (no media in offer?)" << std::endl;
+        LOG_WARN("SendOffer: empty answer (no media in offer?)");
         return grpc::Status::OK;  // 不阻止连接建立
     }
     resp->set_answer_sdp(answer);
-    std::cout << "[gRPC] SendOffer: " << req->peer_id()
-              << " → answer " << answer.size() << " bytes"
-              << " (recv_mids=" << req->recv_mids_size() << ")" << std::endl;
+    LOG_INFO("SendOffer: {} -> answer {} bytes (recv_mids={})",
+             req->peer_id(), answer.size(), req->recv_mids_size());
     return grpc::Status::OK;
 }
 
@@ -203,7 +201,7 @@ grpc::Status MediaServiceImpl::RemovePeer(
     }
 
     resp->set_success(true);
-    std::cout << "[gRPC] RemovePeer: " << req->peer_id() << std::endl;
+    LOG_INFO("RemovePeer: {}", req->peer_id());
     return grpc::Status::OK;
 }
 

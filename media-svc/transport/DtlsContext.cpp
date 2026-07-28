@@ -1,4 +1,5 @@
 #include "DtlsContext.h"
+#include "../utils/Logger.h"
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
@@ -64,7 +65,7 @@ std::string DtlsContext::initGlobals(const std::string& certFile,
     X509_free(cert);
     EVP_PKEY_free(pkey);
 
-    std::cout << "[DtlsContext] Cert fingerprint: " << _certFingerprint << std::endl;
+    LOG_INFO("Cert fingerprint: {}", _certFingerprint);
     return _certFingerprint;
 }
 
@@ -107,7 +108,7 @@ bool DtlsContext::handlePacket(const uint8_t* data, size_t len) {
     int ret = SSL_do_handshake(_ssl);
     if (ret == 1) {
         _handshakeDone = true;
-        std::cout << "[DtlsContext] Handshake done!" << std::endl;
+        LOG_INFO("Handshake done!");
     }
 
     // ③ 取出 OpenSSL 要发的数据

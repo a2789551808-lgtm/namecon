@@ -1,4 +1,5 @@
 #include "SrtpContext.h"
+#include "../utils/Logger.h"
 #include <cstring>
 #include <iostream>
 
@@ -33,8 +34,7 @@ SrtpContext::~SrtpContext() {
 //   用于解密浏览器发来的包，_srtpOut（ssrc_any_outbound）用于加密发给浏览器的包。
 bool SrtpContext::init(const std::string& keyMaterial) {
     if (keyMaterial.size() < 60) {
-        std::cerr << "[SrtpContext] keyMaterial too short: "
-                  << keyMaterial.size() << " (need 60)" << std::endl;
+        LOG_ERROR("keyMaterial too short: {} (need 60)", keyMaterial.size());
         return false;
     }
 
@@ -60,7 +60,7 @@ bool SrtpContext::init(const std::string& keyMaterial) {
 
     srtp_err_status_t stat = srtp_create(&_srtpIn, &policyIn);
     if (stat != srtp_err_status_ok) {
-        std::cerr << "[SrtpContext] srtp_create(in) failed: " << stat << std::endl;
+        LOG_ERROR("srtp_create(in) failed: {}", stat);
         return false;
     }
 
@@ -79,14 +79,14 @@ bool SrtpContext::init(const std::string& keyMaterial) {
 
     stat = srtp_create(&_srtpOut, &policyOut);
     if (stat != srtp_err_status_ok) {
-        std::cerr << "[SrtpContext] srtp_create(out) failed: " << stat << std::endl;
+        LOG_ERROR("srtp_create(out) failed: {}", stat);
         srtp_dealloc(_srtpIn);
         _srtpIn = nullptr;
         return false;
     }
 
     _inited = true;
-    std::cout << "[SrtpContext] SRTP initialized (AES-128-CM, SHA1-80)" << std::endl;
+    LOG_INFO("SRTP initialized (AES-128-CM, SHA1-80)");
     return true;
 }
 

@@ -1,7 +1,7 @@
 package signaling
 
 import (
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -26,7 +26,7 @@ type Client struct {
 func (c *Client) readPump() {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("[WS] readPump panic: %v", r)
+			slog.Error("readPump panic", "error", r)
 		}
 		c.hub.handleLeave(c)
 		c.conn.Close()

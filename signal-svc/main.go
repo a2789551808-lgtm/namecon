@@ -3,9 +3,12 @@ package main
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 
+	"namecon/signal-svc/internal/config"
 	"namecon/signal-svc/internal/core"
+	"namecon/signal-svc/internal/logger"
 )
 
 func main() {
@@ -13,6 +16,14 @@ func main() {
 	if len(os.Args) > 1 {
 		configPath = os.Args[1]
 	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Fatal: load config: %v\n", err)
+		os.Exit(1)
+	}
+	logger.Init(cfg.Log)
+	slog.Info("signal-svc starting", "http_port", cfg.Server.HTTPPort)
 
 	server, err := core.New(configPath)
 	if err != nil {

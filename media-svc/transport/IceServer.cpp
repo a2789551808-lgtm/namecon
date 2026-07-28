@@ -1,4 +1,5 @@
 #include "IceServer.h"
+#include "../utils/Logger.h"
 #include <cstring>
 #include <ctime>
 #include <random>
@@ -31,8 +32,7 @@ IceServer::IceServer()
     : _iceUfrag(randomString(4))
     , _icePwd(randomString(22))
 {
-    std::cout << "[IceServer] ufrag=" << _iceUfrag
-              << " pwd=" << _icePwd << std::endl;
+    LOG_INFO("ufrag={} pwd={}", _iceUfrag, _icePwd);
 }
 
 void IceServer::setSendCallback(SendCallback cb) {
@@ -59,16 +59,15 @@ void IceServer::onStunPacket(const uint8_t* data, size_t len,
     // ✅ 验证凭据
     std::string peerUfrag;
     if (!validateCredentials(data, len, peerUfrag)) {
-        std::cerr << "[IceServer] Credential validation failed from "
-                  << remote.address().to_string() << ":" << remote.port()
-                  << std::endl;
+        LOG_WARN("Credential validation failed from {}:{}",
+                 remote.address().to_string(), remote.port());
         return;
     }
 
     static int okCount = 0;
     if (++okCount <= 5) {
-        std::cout << "[IceServer] ✅ STUN OK peer=" << peerUfrag
-                  << " from " << remote.address().to_string() << ":" << remote.port() << std::endl;
+        LOG_INFO("STUN OK peer={} from {}:{}",
+                 peerUfrag, remote.address().to_string(), remote.port());
     }
 
     sendResponse(data, len, remote);
@@ -111,9 +110,7 @@ bool IceServer::validateCredentials(const uint8_t* data, size_t len,
                 std::string srvUfrag = username.substr(0, colon);
                 outPeerUfrag = username.substr(colon + 1);
                 if (srvUfrag != _iceUfrag) {
-                    std::cerr << "[IceServer] ufrag mismatch: got '"
-                              << srvUfrag << "' want '" << _iceUfrag << "'"
-                              << std::endl;
+                    LOG_WARN("ufrag mismatch: got '{}' want '{}'", srvUfrag, _iceUfrag);
                     return false;  // 不是发给这个 SFU 的
                 }
             }
@@ -157,7 +154,7 @@ bool IceServer::validateCredentials(const uint8_t* data, size_t len,
 
     // ③ 比较
     if (memcmp(hmac, data + miValPos, 20) != 0) {
-        std::cerr << "[IceServer] MESSAGE-INTEGRITY mismatch" << std::endl;
+        LOG_WARN("MESSAGE-INTEGRITY mismatch");
         return false;
     }
 
@@ -242,8 +239,8 @@ void IceServer::sendResponse(const uint8_t* request, size_t /*reqLen*/,
     if (_sendCb) {
         static int sendCount = 0;
         if (++sendCount <= 5) {
-            std::cout << "[IceServer] 📤 Sent response to "
-                      << remote.address().to_string() << ":" << remote.port() << std::endl;
+            LOG_INFO("Sent response to {}:{}",
+                     remote.address().to_string(), remote.port());
         }
         _sendCb(response, respLen, remote);
     }

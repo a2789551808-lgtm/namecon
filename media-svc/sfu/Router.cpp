@@ -4,6 +4,7 @@
 #include "../transport/SrtpContext.h"
 #include "../rtp/RtpHeader.h"
 #include "../sdp/SdpParser.h"
+#include "../utils/Logger.h"
 #include <cstring>
 #include <iostream>
 #include <algorithm>
@@ -80,10 +81,9 @@ uint32_t Router::addConsumer(Peer* subscriber, Peer* publisher, bool isVideo) {
         subscriber->consumers.push_back(std::move(c));
     }
 
-    std::cout << "[Router] AddConsumer: " << subscriber->peerId
-              << " <- " << publisher->peerId
-              << " (" << (isVideo ? "video" : "audio")
-              << ") outSsrc=" << raw->rewrittenSsrc << std::endl;
+    LOG_INFO("AddConsumer: {} <- {} ({}) outSsrc={}",
+             subscriber->peerId, publisher->peerId,
+             isVideo ? "video" : "audio", raw->rewrittenSsrc);
     return raw->rewrittenSsrc;
 }
 
@@ -123,7 +123,7 @@ void Router::removePeer(Peer* peer) {
     _allPeers.erase(std::remove(_allPeers.begin(), _allPeers.end(), peer),
                     _allPeers.end());
     _table->unbindPeer(peer);
-    std::cout << "[Router] Peer removed: " << peer->peerId << std::endl;
+    LOG_INFO("Peer removed: {}", peer->peerId);
 }
 
 // ============================================================
@@ -154,8 +154,7 @@ Producer* Router::findOrCreateProducer(Peer* fromPeer, uint32_t ssrc, bool isVid
 
     _table->bind(ssrc, fromPeer);
 
-    std::cout << "[Router] Producer created: " << fromPeer->peerId
-              << " ssrc=" << ssrc << " isVideo=" << isVideo << std::endl;
+    LOG_INFO("Producer created: {} ssrc={} isVideo={}", fromPeer->peerId, ssrc, isVideo);
 
     // video Producer 创建时立即向 publisher 发 PLI 请求关键帧。
     // 场景：B 开摄像头后首包到达 SFU，此时 A 早已在等收 B 的视频。
@@ -175,8 +174,7 @@ Producer* Router::findOrCreateProducer(Peer* fromPeer, uint32_t ssrc, bool isVid
         int outLen = 12;
         if (fromPeer->srtp->protectRtcp(out, &outLen)) {
             _udp->sendTo(out, static_cast<size_t>(outLen), fromPeer->remoteEp);
-            std::cout << "[Router] Sent PLI to " << fromPeer->peerId
-                      << " on new video Producer (ssrc=" << ssrc << ")" << std::endl;
+            LOG_INFO("Sent PLI to {} on new video Producer (ssrc={})", fromPeer->peerId, ssrc);
         }
     }
 
@@ -234,17 +232,6 @@ void Router::onRtpPacket(const uint8_t* plainRtp, size_t len, Peer* fromPeer) {
 
     bool isVideo = (SdpParser::videoPTs.count(hdr.payloadType) > 0);
 
-    // 诊断日志：确认 RTP 包到达（限频避免刷屏）
-    static thread_local int logCount = 0;
-    if (++logCount <= 3 || logCount % 500 == 0) {
-        std::cout << "[Router] RTP from " << fromPeer->peerId
-                  << " ssrc=" << hdr.ssrc << " pt=" << (int)hdr.payloadType
-                  << " seq=" << hdr.sequenceNumber
-                  << " isVideo=" << isVideo
-                  << " (videoPT=" << (int)SdpParser::videoPT
-                  << " audioPT=" << (int)SdpParser::audioPT << ")"
-                  << " #" << logCount << std::endl;
-    }
     Producer* producer = nullptr;
     std::vector<Consumer*> targets;
 
@@ -275,14 +262,6 @@ void Router::onRtpPacket(const uint8_t* plainRtp, size_t len, Peer* fromPeer) {
         if (!c->subscriber || !c->subscriber->srtp) continue;
         if (c->recvMid.empty()) continue;  // 还没协商好，跳过（等 SendOffer 绑定后开始转发）
 
-        // 诊断：首次转发时打印
-        if (c->packetsSent == 0) {
-            std::cout << "[Router] FWD first: " << fromPeer->peerId
-                      << " ssrc=" << hdr.ssrc << " -> " << c->subscriber->peerId
-                      << " outSsrc=" << c->rewrittenSsrc
-                      << " mid=" << c->recvMid << std::endl;
-        }
-
         uint8_t out[65536];
         memcpy(out, plainRtp, len);
         rewriteRtpHeader(out, len, *c);
@@ -305,14 +284,14 @@ uint32_t Router::bindConsumerByMid(Peer* subscriber,
     for (auto& c : subscriber->consumers) {
         if (c->isVideo == isVideo && c->publisher && c->publisher->peerId == publisherPeerId) {
             c->recvMid = recvMid;
-            std::cout << "[Router] bindConsumerByMid: " << subscriber->peerId
-                      << " mid=" << recvMid << " -> outSsrc=" << c->rewrittenSsrc << std::endl;
+            LOG_INFO("bindConsumerByMid: {} mid={} -> outSsrc={}",
+                     subscriber->peerId, recvMid, c->rewrittenSsrc);
             return c->rewrittenSsrc;
         }
     }
-    std::cerr << "[Router] bindConsumerByMid: no consumer for "
-              << subscriber->peerId << " <- " << publisherPeerId
-              << " (" << (isVideo ? "video" : "audio") << ")" << std::endl;
+    LOG_WARN("bindConsumerByMid: no consumer for {} <- {} ({})",
+             subscriber->peerId, publisherPeerId,
+             isVideo ? "video" : "audio");
     return 0;
 }
 
@@ -396,7 +375,7 @@ void Router::onRtcpPacket(const uint8_t* rtcp, size_t len, Peer* fromPeer) {
 
         size_t remaining = len - offset;
         if (rtcpIsPLI(p, remaining)) {
-            std::cout << "[Router] RTCP PLI from " << fromPeer->peerId << std::endl;
+            LOG_INFO("RTCP PLI from {}", fromPeer->peerId);
             handlePLI(p, pktLen, fromPeer);
         } else if (rtcpIsNACK(p, remaining)) {
             handleNACK(p, pktLen, fromPeer);

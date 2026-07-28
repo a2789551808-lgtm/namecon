@@ -7,6 +7,8 @@ services:
       - "10000:10000/udp"
     environment:
       - PUBLIC_IP=${PUBLIC_IP:-127.0.0.1}
+    volumes:
+      - ./logs:/var/log/namecon
     restart: unless-stopped
 
   signal-svc:
@@ -17,6 +19,8 @@ services:
       - "8080:8080"
     environment:
       - PUBLIC_IP=${PUBLIC_IP:-127.0.0.1}
+    volumes:
+      - ./logs:/var/log/namecon
     depends_on:
       - media-svc
     restart: unless-stopped

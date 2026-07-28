@@ -1,4 +1,5 @@
 #include "UdpServer.h"
+#include "../utils/Logger.h"
 #include <iostream>
 
 UdpServer::UdpServer(boost::asio::io_context& ioc, uint16_t port)
@@ -6,7 +7,7 @@ UdpServer::UdpServer(boost::asio::io_context& ioc, uint16_t port)
         boost::asio::ip::udp::v4(), port))
     , _port(port)
 {
-    std::cout << "[UdpServer] Bound to port " << port << std::endl;
+    LOG_INFO("Bound to port {}", port);
 }
 
 UdpServer::~UdpServer() {
@@ -30,7 +31,7 @@ void UdpServer::doReceive() {
 
 void UdpServer::onReceive(const boost::system::error_code& ec, size_t bytesRead) {
     if (ec) {
-        std::cerr << "[UdpServer] Receive error: " << ec.message() << std::endl;
+        LOG_ERROR("Receive error: {}", ec.message());
         return;
     }
 
@@ -46,7 +47,7 @@ void UdpServer::sendTo(const uint8_t* data, size_t len,
         boost::asio::buffer(data, len), target,
         [](const boost::system::error_code& ec, size_t /*sent*/) {
             if (ec) {
-                std::cerr << "[UdpServer] Send error: " << ec.message() << std::endl;
+                LOG_ERROR("Send error: {}", ec.message());
             }
         });
 }

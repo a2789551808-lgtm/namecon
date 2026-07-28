@@ -1,5 +1,6 @@
 #include "GrpcServer.h"
 #include <iostream>
+#include "../utils/Logger.h"
 
 GrpcServer::GrpcServer(const std::string& addr, int port) {
     grpc::ServerBuilder builder;
@@ -8,7 +9,7 @@ GrpcServer::GrpcServer(const std::string& addr, int port) {
     builder.RegisterService(&_service);
 
     _server = builder.BuildAndStart();
-    std::cout << "[gRPC] Server listening on " << listenAddr << std::endl;
+    LOG_INFO("Server listening on {}", listenAddr);
 }
 
 GrpcServer::~GrpcServer() {
@@ -25,6 +26,6 @@ void GrpcServer::stop() {
     if (_server) {
         _server->Shutdown();
         _server->Wait();
-        std::cout << "[gRPC] Server stopped" << std::endl;
+        LOG_INFO("Server stopped");
     }
 }

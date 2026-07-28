@@ -2,11 +2,12 @@
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#include "../utils/Logger.h"
 
 void ConfigMgr::Load(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) {
-        std::cerr << "[config] Cannot open " << path << " — using defaults" << std::endl;
+        LOG_WARN("Cannot open {} - using defaults", path);
         return;
     }
 
@@ -52,9 +53,9 @@ void ConfigMgr::Load(const std::string& path) {
 
     // 输出加载结果
     for (const auto& sec : _config_map) {
-        std::cout << "[" << sec.first << "]" << std::endl;
+        LOG_INFO("[{}]", sec.first);
         for (const auto& kv : sec.second._section_datas) {
-            std::cout << "  " << kv.first << " = " << kv.second << std::endl;
+            LOG_INFO("  {} = {}", kv.first, kv.second);
         }
     }
 }
