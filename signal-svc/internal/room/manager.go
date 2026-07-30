@@ -93,7 +93,7 @@ func (m *Manager) AddParticipant(roomID, username string) (*Participant, error) 
 	return p, nil
 }
 
-// RemoveParticipant 移除参会者 → 调 C++ RemovePeer
+// RemoveParticipant 移除参会者 -> 调 C++ RemovePeer -> 房间空了自动回收
 func (m *Manager) RemoveParticipant(roomID, peerID string) error {
 	room, err := m.GetRoom(roomID)
 	if err != nil {
@@ -102,7 +102,15 @@ func (m *Manager) RemoveParticipant(roomID, peerID string) error {
 
 	room.mu.Lock()
 	delete(room.Participants, peerID)
+	empty := len(room.Participants) == 0
 	room.mu.Unlock()
+
+	if empty {
+		m.mu.Lock()
+		delete(m.rooms, roomID)
+		m.mu.Unlock()
+		slog.Info("room destroyed (empty)", "room_id", roomID)
+	}
 
 	return m.sfu.RemovePeer(peerID)
 }

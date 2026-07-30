@@ -16,6 +16,8 @@ signal-svc/pkg/pb/
 # === IDE ===
 .vscode/
 .idea/
+media-svc/.cache/
+media-svc/compile_commands.json
 
 # === OS ===
 .DS_Store
